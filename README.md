@@ -129,6 +129,7 @@ All Redis commands are forwarded transparently. up-redis is a proxy — it doesn
 | Graceful shutdown | None | Request draining, configurable timeout |
 | Request timeout | None | Per-request timeout middleware |
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
+| PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
 | Docker image | ~100MB | ~50MB (Bun Alpine) |
 | Tests | External | 232 built-in (unit + integration + SDK compat) |
 
@@ -140,7 +141,7 @@ All Redis commands are forwarded transparently. up-redis is a proxy — it doesn
 | UNLINK with 0 keys | Silently succeeds | Redis returns error |
 | ZRANGE LIMIT | Works without BYSCORE/BYLEX | Redis requires BYSCORE/BYLEX |
 | RedisJSON | Custom response format | Standard Redis Stack format |
-| Pub/Sub SSE | `POST /subscribe/{channel}` | Supported — SSE streaming (`GET` or `POST`) |
+| PSUBSCRIBE (pattern) | `POST /psubscribe/{pattern}` | Not yet supported (SUBSCRIBE works) |
 | Rate limiting | Built-in | Use reverse proxy (nginx, Caddy) |
 | Multi-region | Built-in | Single-region by design |
 
@@ -156,7 +157,6 @@ All Redis commands are forwarded transparently. up-redis is a proxy — it doesn
 - Multi-region replication with read-your-writes consistency
 - Built-in rate limiting and access control
 - Managed infrastructure with zero ops
-- Managed infrastructure with zero ops (truly)
 
 ## Configuration
 
