@@ -52,6 +52,14 @@ const tx = redis.multi()
 tx.set("counter", 0)
 tx.incr("counter")
 const txResults = await tx.exec() // ["OK", 1]
+
+// PubSub
+const sub = redis.subscribe(["my-channel"])
+sub.on("message", ({ channel, message }) => {
+  console.log(`${channel}: ${message}`)
+})
+await redis.publish("my-channel", "hello") // 1 (subscriber count)
+await sub.unsubscribe()
 ```
 
 ## REST API
@@ -79,17 +87,31 @@ curl -X POST http://localhost:8080/multi-exec \
   -H "Content-Type: application/json" \
   -d '[["SET","k1","v1"],["INCR","counter"]]'
 # → [{"result":"OK"},{"result":1}]
+
+# Subscribe to channel (SSE stream — stays open)
+curl -N http://localhost:8080/subscribe/my-channel \
+  -H "Authorization: Bearer your-token"
+# → data: subscribe,my-channel,1
+# → data: message,my-channel,hello    (when someone publishes)
+
+# Publish to channel (from another terminal)
+curl -X POST http://localhost:8080/ \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -d '["PUBLISH", "my-channel", "hello"]'
+# → {"result":1}
 ```
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 198 tests including 83 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 232 tests including 97 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
 | `POST /` | Supported — single command |
 | `POST /pipeline` | Supported — batch execution |
 | `POST /multi-exec` | Supported — atomic transactions |
+| `GET\|POST /subscribe/:channel` | Supported — PubSub over SSE |
 | `GET /` | Supported — health check |
 | `GET /health` | Supported — rich health with Redis probe |
 | `GET /metrics` | Supported — Prometheus (opt-in) |
@@ -108,7 +130,7 @@ All Redis commands are forwarded transparently. up-redis is a proxy — it doesn
 | Request timeout | None | Per-request timeout middleware |
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | Docker image | ~100MB | ~50MB (Bun Alpine) |
-| Tests | External | 198 built-in (unit + integration + SDK compat) |
+| Tests | External | 232 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
@@ -118,7 +140,7 @@ All Redis commands are forwarded transparently. up-redis is a proxy — it doesn
 | UNLINK with 0 keys | Silently succeeds | Redis returns error |
 | ZRANGE LIMIT | Works without BYSCORE/BYLEX | Redis requires BYSCORE/BYLEX |
 | RedisJSON | Custom response format | Standard Redis Stack format |
-| Pub/Sub SSE | `POST /subscribe/{channel}` | Not supported (use direct Redis) |
+| Pub/Sub SSE | `POST /subscribe/{channel}` | Supported — SSE streaming (`GET` or `POST`) |
 | Rate limiting | Built-in | Use reverse proxy (nginx, Caddy) |
 | Multi-region | Built-in | Single-region by design |
 
@@ -134,7 +156,7 @@ All Redis commands are forwarded transparently. up-redis is a proxy — it doesn
 - Multi-region replication with read-your-writes consistency
 - Built-in rate limiting and access control
 - Managed infrastructure with zero ops
-- Pub/Sub over HTTP (SSE streaming)
+- Managed infrastructure with zero ops (truly)
 
 ## Configuration
 
@@ -189,7 +211,7 @@ Exposes `http_requests_total{method,status}`, `http_request_duration_seconds` hi
 - **Redis:** Bun.redis (native, zero-dep) — RESP3, auto-pipelining
 - **Validation:** [Zod](https://zod.dev) v3 — config validation
 
-Key design decisions: single shared connection with auto-pipelining for commands/pipelines, dedicated connection per MULTI/EXEC transaction (prevents interleaving), RESP3-to-RESP2 translation layer (Maps→flat arrays, Booleans→0/1), recursive base64 encoding.
+Key design decisions: single shared connection with auto-pipelining for commands/pipelines, dedicated connection per MULTI/EXEC transaction (prevents interleaving), dedicated connection per PubSub subscription (SSE streaming), RESP3-to-RESP2 translation layer (Maps→flat arrays, Booleans→0/1), recursive base64 encoding.
 
 See [PLAN.md](./PLAN.md) for full architecture details.
 
@@ -206,13 +228,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-198 tests across three tiers:
+232 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 48 | RESP3 normalization, base64 encoding |
-| **Integration** | 67 | Full HTTP roundtrips against real Redis |
-| **SDK Compatibility** | 83 | Real `@upstash/redis` SDK against up-redis |
+| **Unit** | 55 | RESP3 normalization, base64 encoding, SSE event formatting |
+| **Integration** | 80 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub) |
+| **SDK Compatibility** | 97 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class) |
 
 ```bash
 bun test                       # All tests

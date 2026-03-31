@@ -8,6 +8,7 @@ import { commandRoutes } from "./routes/command"
 import { healthRoutes } from "./routes/health"
 import { multiExecRoutes } from "./routes/multi-exec"
 import { pipelineRoutes } from "./routes/pipeline"
+import { pubsubRoutes } from "./routes/pubsub"
 
 const app = new Hono()
 
@@ -36,6 +37,7 @@ app.use("/*", timeoutMiddleware)
 app.route("/", commandRoutes)
 app.route("/", pipelineRoutes)
 app.route("/", multiExecRoutes)
+app.route("/", pubsubRoutes)
 
 // 404 handler
 app.notFound((c) => {

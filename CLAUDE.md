@@ -59,7 +59,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 
 - **Response envelope:** `{ "result": <data> }` on success, `{ "error": "<msg>" }` on error (HTTP 400)
 - **Auth:** Bearer token via `Authorization` header, validated against `UPREDIS_TOKEN` env var
-- **Connection model:** Single shared Bun.redis connection with auto-pipelining for commands/pipelines, dedicated connection per transaction (MULTI/EXEC) via `duplicate()` to prevent interleaving
+- **Connection model:** Single shared Bun.redis connection with auto-pipelining for commands/pipelines, dedicated connection per transaction (MULTI/EXEC) via `duplicate()` to prevent interleaving, dedicated connection per PubSub subscription via `duplicate()` for long-lived SSE streams
 - **RESP3 → RESP2 translation:** Bun.redis speaks RESP3 but the SDK expects RESP2-compatible JSON — normalize Maps to flat arrays, Booleans to 0/1, recursively
 - **Base64 encoding:** When `Upstash-Encoding: base64` header present, all string values in responses are base64-encoded (numbers, null pass through)
 
@@ -70,6 +70,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 | `POST /` | Single Redis command (JSON array body) |
 | `POST /pipeline` | Batch commands (2D JSON array body) |
 | `POST /multi-exec` | Transaction (2D JSON array body, wrapped in MULTI/EXEC) |
+| `GET\|POST /subscribe/:channel` | PubSub subscription (SSE stream, Upstash-compatible) |
 | `GET /` | Health check (SRH compat: welcome message) |
 | `GET /health` | Rich health check (Redis probe + shutdown state) |
 | `GET /metrics` | Prometheus metrics (opt-in) |
@@ -107,6 +108,19 @@ Each transaction gets a dedicated Bun.redis connection via `duplicate()`:
 
 This prevents the command interleaving bug (SRH issue #25) that occurs when concurrent transactions share a connection.
 
+### PubSub Design (GET/POST /subscribe/:channel)
+
+Each subscription gets a dedicated Bun.redis connection via `duplicate()`:
+1. Client sends `GET` or `POST /subscribe/my-channel`
+2. Server returns SSE response immediately via Hono's `streamSSE()`
+3. Async callback creates dedicated connection: `const sub = await mainClient.duplicate()`
+4. `await sub.subscribe(channel, listener)` — listener forwards each message as SSE
+5. SSE format: `data: subscribe,{channel},{count}\n\n` then `data: message,{channel},{content}\n\n`
+6. Blocks via `Promise.race([clientDisconnect, redisClose])` until stream ends
+7. `finally` block: unsubscribe + close dedicated connection (idempotent, safe for shutdown)
+
+Active subscriptions are tracked in a `Set` with exported `closeAllSubscriptions()` for graceful shutdown. The timeout middleware does not interfere — `streamSSE()` returns the Response synchronously, so `next()` resolves immediately.
+
 ## Project Structure
 
 ```
@@ -130,9 +144,11 @@ src/
     command.ts          # POST / (single Redis command)
     pipeline.ts         # POST /pipeline (batch execution)
     multi-exec.ts       # POST /multi-exec (transactional execution)
+    pubsub.ts           # GET/POST /subscribe/:channel (SSE streaming)
   translate/
     response.ts         # normalizeResp3(): Map → flat array, Boolean → 0/1
     encoding.ts         # encodeResult(): recursive base64 encoding
+    pubsub.ts           # SSE event formatting (subscribe confirmation, message events)
 tests/
   unit/                 # Pure logic tests (response normalization, encoding)
   integration/          # Against real Redis
@@ -161,19 +177,20 @@ Inherited from up-vector experience — critical for correctness:
 
 - **`Bun.redis` speaks RESP3** — Redis 6+ returns richer types (Map, Boolean, Set) that must be normalized to RESP2-compatible JSON. See `src/translate/response.ts`.
 - **`redis.send(command, args)`** is the primary interface — forwards any Redis command as raw strings. This is all we need since we're a proxy.
-- **`redis.duplicate()`** creates a new connection — used for MULTI/EXEC to prevent interleaving. Always close in `finally`.
+- **`redis.duplicate()`** creates a new connection — used for MULTI/EXEC (prevents interleaving) and PubSub subscriptions (subscriber mode). Always close in `finally`.
+- **`redis.subscribe(channel, listener)`** puts the connection in subscriber mode — only `ping`/`subscribe`/`unsubscribe` allowed. Returns the subscription count. Listener receives `(message: string, channel: string)`.
 - **Auto-pipelining** is enabled by default — concurrent `send()` calls are automatically batched over one TCP connection. No connection pool needed.
 - **SCAN cursor is a string** — compare with `"0"` not `0`.
 
 ## Testing Strategy
 
-198 tests across three tiers:
+232 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 48 | RESP3 normalization, base64 encoding |
-| **Integration** | 67 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, edge cases, health) |
-| **SDK Compatibility** | 83 | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions) |
+| **Unit** | 55 | RESP3 normalization, base64 encoding, SSE event formatting |
+| **Integration** | 80 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health) |
+| **SDK Compatibility** | 97 | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
 

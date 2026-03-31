@@ -1,6 +1,7 @@
 import { config } from "./config"
 import { log } from "./logger"
 import { closeRedis, initRedis } from "./redis"
+import { closeAllSubscriptions } from "./routes/pubsub"
 import { app } from "./server"
 import { setShuttingDown } from "./shutdown"
 
@@ -40,6 +41,10 @@ async function main(): Promise<void> {
 		}, config.shutdownTimeout)
 
 		try {
+			// Close SSE subscriptions so server.stop() can drain
+			await closeAllSubscriptions()
+			log.info("subscriptions closed")
+
 			// Wait for in-flight requests to complete
 			await server.stop()
 			log.info("requests drained")
