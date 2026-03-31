@@ -12,7 +12,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
 
       - name: Cache Bun dependencies
@@ -47,7 +47,7 @@ jobs:
       UPREDIS_TOKEN: test-token-123
       UPREDIS_REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
 
       - name: Cache Bun dependencies
