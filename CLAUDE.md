@@ -167,12 +167,15 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-Three tiers:
-1. **Unit** (`tests/unit/`): Pure function tests for RESP3 normalization and base64 encoding
-2. **Integration** (`tests/integration/`): Full HTTP roundtrips against real Redis
-3. **SDK Compatibility** (`tests/compatibility/`): Actual `@upstash/redis` SDK pointed at up-redis
+198 tests across three tiers:
 
-Weekly CI (`compat.yml`) runs SDK tests against `@upstash/redis@latest` and auto-creates GitHub issues on drift.
+| Tier | Tests | Purpose |
+|------|-------|---------|
+| **Unit** | 48 | RESP3 normalization, base64 encoding |
+| **Integration** | 67 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, edge cases, health) |
+| **SDK Compatibility** | 83 | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions) |
+
+Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
 
 ## Key References
 
