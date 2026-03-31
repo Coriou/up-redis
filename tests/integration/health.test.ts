@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
-const BASE_URL = "http://localhost:8080"
+const BASE_URL = process.env.UPREDIS_TEST_URL ?? "http://localhost:8080"
+const TOKEN = process.env.UPREDIS_TOKEN ?? "test-token-123"
 
 describe("Health endpoints", () => {
 	test("GET / returns 200 with welcome message", async () => {
@@ -30,7 +31,7 @@ describe("Health endpoints", () => {
 
 	test("404 for unknown paths (with auth)", async () => {
 		const res = await fetch(`${BASE_URL}/nonexistent`, {
-			headers: { Authorization: "Bearer test-token-123" },
+			headers: { Authorization: `Bearer ${TOKEN}` },
 		})
 		expect(res.status).toBe(404)
 		const data = await res.json()
