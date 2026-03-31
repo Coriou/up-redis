@@ -234,24 +234,24 @@ docker compose up -d     # Starts up-redis + Redis
 
 ### Side-by-side with up-vector
 
-Both services can share the same Redis instance:
+Both services can share the same Redis Stack instance — up-redis handles standard Redis commands, up-vector handles vector search:
 
 ```yaml
 services:
-  redis:
-    image: redis:7-alpine
+  redis-stack:
+    image: redis/redis-stack-server:latest
 
   up-redis:
     image: ghcr.io/coriou/up-redis:latest
     environment:
       UPREDIS_TOKEN: ${UPREDIS_TOKEN}
-      UPREDIS_REDIS_URL: redis://redis:6379
+      UPREDIS_REDIS_URL: redis://redis-stack:6379
 
   up-vector:
     image: ghcr.io/coriou/up-vector:latest
     environment:
       UPVECTOR_TOKEN: ${UPVECTOR_TOKEN}
-      UPVECTOR_REDIS_URL: redis://redis:6379
+      UPVECTOR_REDIS_URL: redis://redis-stack:6379
 ```
 
 ## License
