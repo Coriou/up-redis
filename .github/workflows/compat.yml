@@ -1,0 +1,87 @@
+name: SDK Compatibility (latest)
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Monday 9 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  compat-latest:
+    name: Test against @upstash/redis@latest
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      UPREDIS_TOKEN: test-token-123
+      UPREDIS_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - name: Install latest @upstash/redis
+        run: bun add -d @upstash/redis@latest
+
+      - name: Capture SDK version
+        id: sdk
+        run: |
+          VERSION=$(bun pm ls 2>/dev/null | grep @upstash/redis | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Testing against @upstash/redis@$VERSION"
+
+      - name: Start up-redis
+        run: bun run src/index.ts &
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/ && break || sleep 1
+          done
+
+      - name: Run compatibility tests
+        run: bun test tests/compatibility
+
+      - name: Create issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.sdk.outputs.version }}"
+          TITLE="SDK Compat: @upstash/redis@${VERSION} test failures"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Check for existing open issue with same title
+          EXISTING=$(gh issue list --search "$TITLE" --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Issue #$EXISTING already open for this version, skipping"
+            exit 0
+          fi
+
+          gh issue create \
+            --title "$TITLE" \
+            --label "sdk-compat,automated" \
+            --body "Scheduled compatibility tests failed against \`@upstash/redis@${VERSION}\`.
+
+          **Workflow run:** ${RUN_URL}
+
+          This likely means the SDK introduced changes that up-redis doesn't handle yet. Check the workflow logs for failing tests."

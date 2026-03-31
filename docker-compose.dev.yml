@@ -1,0 +1,15 @@
+services:
+  up-redis:
+    build:
+      context: .
+      target: builder
+    command: ["bun", "run", "--watch", "src/index.ts"]
+    volumes:
+      - ./src:/app/src:ro
+    environment:
+      UPREDIS_LOG_LEVEL: debug
+      UPREDIS_LOG_FORMAT: text
+
+  redis:
+    ports:
+      - "6379:6379"

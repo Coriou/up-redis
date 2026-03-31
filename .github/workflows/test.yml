@@ -1,0 +1,75 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+    paths: [src/**, tests/**, package.json, bun.lock, Dockerfile, .github/workflows/**]
+  pull_request:
+    paths: [src/**, tests/**, package.json, bun.lock, Dockerfile, .github/workflows/**]
+
+jobs:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun test tests/unit
+        env:
+          UPREDIS_TOKEN: test
+
+  integration:
+    name: Integration + Compatibility
+    runs-on: ubuntu-latest
+    needs: unit
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      UPREDIS_TOKEN: test-token-123
+      UPREDIS_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install
+
+      - name: Start up-redis
+        run: bun run src/index.ts &
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/ && break || sleep 1
+          done
+
+      - name: Integration tests
+        run: bun test tests/integration
+
+      - name: SDK compatibility tests
+        run: bun test tests/compatibility

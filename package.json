@@ -1,0 +1,43 @@
+{
+	"name": "up-redis",
+	"version": "0.1.0",
+	"description": "Self-hosted Upstash Redis-compatible HTTP proxy backed by any Redis 6+ server",
+	"type": "module",
+	"scripts": {
+		"dev": "bun run --watch src/index.ts",
+		"start": "bun run src/index.ts",
+		"build": "bun build src/index.ts --target=bun --outdir=dist --minify",
+		"test": "bun test",
+		"test:unit": "bun test tests/unit",
+		"test:integration": "bun test tests/integration",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"format": "biome format --write .",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"hono": "^4.7.0",
+		"zod": "^3.24.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.0",
+		"@types/bun": "^1.2.0",
+		"@upstash/redis": "^1.34.0",
+		"typescript": "^5.7.0"
+	},
+	"license": "MIT",
+	"author": "Ben <hello@benjsmin.com>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Coriou/up-redis"
+	},
+	"keywords": [
+		"upstash",
+		"redis",
+		"self-hosted",
+		"serverless-redis-http",
+		"srh",
+		"drop-in",
+		"proxy"
+	]
+}
