@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { checkBlockedCommand } from "../commands";
 import { getClient } from "../redis";
 import { encodeResult } from "../translate/encoding";
 import { normalizeResp3 } from "../translate/response";
@@ -36,6 +37,10 @@ pipelineRoutes.post("/pipeline", async (c) => {
       return Promise.reject(
         new Error("Each pipeline command must be a non-empty array"),
       );
+    }
+    const blocked = checkBlockedCommand(String(cmd[0]));
+    if (blocked) {
+      return Promise.reject(new Error(blocked));
     }
     return redis.send(String(cmd[0]), cmd.slice(1).map(String));
   });

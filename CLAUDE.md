@@ -75,6 +75,18 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 | `GET /health`                   | Rich health check (Redis probe + shutdown state)        |
 | `GET /metrics`                  | Prometheus metrics (opt-in)                             |
 
+### Blocked Commands (shared connection safety)
+
+`POST /` and `POST /pipeline` reject commands that would corrupt the shared Bun.redis connection:
+
+- **Subscriber mode:** `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` (+ `UNSUBSCRIBE` variants)
+- **Monitor mode:** `MONITOR`
+- **Transaction state:** `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` (use `/multi-exec`)
+- **Database switching:** `SELECT` (would change DB for all concurrent users)
+- **Connection termination:** `QUIT`, `RESET`
+
+These return `400` with an error message. Transaction commands include a hint to use `/multi-exec`.
+
 ### RESP3 → JSON Translation (critical)
 
 ```

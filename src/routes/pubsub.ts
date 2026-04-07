@@ -18,10 +18,23 @@ export const pubsubRoutes = new Hono();
 
 const MAX_CHANNEL_NAME_LENGTH = 512;
 
+/** Reject null bytes and ASCII control characters (0x00–0x1F, 0x7F) */
+function hasControlCharacters(str: string): boolean {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
 async function handleSubscribe(c: Context) {
   const channel = c.req.param("channel") as string;
 
-  if (!channel || channel.length > MAX_CHANNEL_NAME_LENGTH) {
+  if (
+    !channel ||
+    channel.length > MAX_CHANNEL_NAME_LENGTH ||
+    hasControlCharacters(channel)
+  ) {
     return c.json({ error: "Invalid channel name" }, 400);
   }
 

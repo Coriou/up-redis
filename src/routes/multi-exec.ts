@@ -62,6 +62,12 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 
     if (Array.isArray(execResult)) {
       for (const raw of execResult) {
+        // Bun.redis returns Error objects for per-command runtime failures
+        // (e.g., WRONGTYPE) — detect before normalizeResp3 flattens them
+        if (raw instanceof Error) {
+          results.push({ error: raw.message });
+          continue;
+        }
         try {
           let result = normalizeResp3(raw);
           if (useBase64) {

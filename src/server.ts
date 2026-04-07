@@ -21,6 +21,8 @@ app.onError(errorHandler);
 app.use(async (c, next) => {
   await next();
   c.header("X-Content-Type-Options", "nosniff");
+  c.header("X-Frame-Options", "DENY");
+  c.header("Cache-Control", "no-store");
 });
 
 // Logger on all routes
