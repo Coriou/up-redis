@@ -16,10 +16,13 @@ cd up-redis
 cp .env.example .env
 # Edit .env — set UPREDIS_TOKEN to a secret of your choice
 
-docker compose up -d
+# Local development — exposes port 8080 to the host
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 The API is now available at `http://localhost:8080`.
+
+> **Note:** The base `docker-compose.yml` uses Docker `expose` rather than `ports` to keep the service internal-only — this is intentional for deployment behind a reverse proxy (Coolify, Traefik, nginx, etc.). Use the dev overlay above to publish the port to localhost. For a production deployment behind your own reverse proxy, just `docker compose up -d`.
 
 ## Usage with @upstash/redis
 
@@ -104,7 +107,7 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 232 tests including 97 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 232+ tests including 97 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
@@ -112,11 +115,19 @@ Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/
 | `POST /pipeline` | Supported — batch execution |
 | `POST /multi-exec` | Supported — atomic transactions |
 | `GET\|POST /subscribe/:channel` | Supported — PubSub over SSE |
-| `GET /` | Supported — health check |
-| `GET /health` | Supported — rich health with Redis probe |
+| `GET /` | Supported — health check (welcome message) |
+| `GET /health` | Supported — rich health with Redis probe (readiness) |
+| `GET /livez` | Supported — liveness probe (does NOT check Redis) |
+| `GET /readyz` | Supported — Kubernetes-style readiness alias for /health |
 | `GET /metrics` | Supported — Prometheus (opt-in) |
 
-All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work.
+All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work, with these exceptions blocked at the proxy layer to protect the shared connection:
+
+- **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `SELECT`, `QUIT`, `RESET`
+- **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF` — these would hold the shared connection and starve every other request
+- **Server admin / DoS vectors:** `SHUTDOWN`, `REPLICAOF`/`SLAVEOF`, `FAILOVER`, `DEBUG`, `MONITOR`, `CLIENT KILL`/`PAUSE`/`UNPAUSE`/`REPLY`/`NO-EVICT`/`SETNAME`/`TRACKING`
+
+Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST` remain available.
 
 ### Why not SRH?
 
@@ -179,16 +190,26 @@ All environment variables are prefixed `UPREDIS_`:
 **Health check** — no auth required:
 
 ```bash
-# Lightweight probe (used by Docker HEALTHCHECK)
+# Lightweight probe (used by Docker HEALTHCHECK, SRH-compatible)
 curl http://localhost:8080/
 # → 200 "Welcome to up-redis" or 503 "Shutting Down"
 
-# Rich health endpoint with dependency status
+# Rich readiness endpoint — checks Redis connectivity
 curl http://localhost:8080/health
 # → {"status":"ok","redis":"connected"}
 # → {"status":"degraded","redis":"disconnected"} (503)
 # → {"status":"shutting_down","redis":"..."} (503)
+
+# Liveness probe — does NOT check Redis (use this for Kubernetes livenessProbe)
+curl http://localhost:8080/livez
+# → {"status":"ok"} or {"status":"shutting_down"} (503)
+
+# Kubernetes-style readiness alias for /health
+curl http://localhost:8080/readyz
+# → {"status":"ready","redis":"connected"} or {"status":"not_ready",...} (503)
 ```
+
+**Liveness vs readiness:** `/livez` returns 200 as long as the process can respond. `/health` and `/readyz` return 503 when Redis is unreachable. Configure Kubernetes `livenessProbe` against `/livez` and `readinessProbe` against `/health` so a transient Redis outage doesn't cause unnecessary pod restarts.
 
 **Prometheus metrics** — enable with `UPREDIS_METRICS=true`:
 
@@ -228,13 +249,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-232 tests across three tiers:
+336 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 55 | RESP3 normalization, base64 encoding, SSE event formatting |
-| **Integration** | 80 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub) |
-| **SDK Compatibility** | 97 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class) |
+| **Unit** | 124 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
+| **Integration** | 119 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
+| **SDK Compatibility** | 93 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class) |
 
 ```bash
 bun test                       # All tests

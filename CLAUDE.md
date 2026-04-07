@@ -73,19 +73,36 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 | `GET\|POST /subscribe/:channel` | PubSub subscription (SSE stream, Upstash-compatible)    |
 | `GET /`                         | Health check (SRH compat: welcome message)              |
 | `GET /health`                   | Rich health check (Redis probe + shutdown state)        |
+| `GET /livez`                    | Liveness probe — does NOT check Redis (no auth)         |
+| `GET /readyz`                   | Kubernetes-style readiness alias for `/health`          |
 | `GET /metrics`                  | Prometheus metrics (opt-in)                             |
 
 ### Blocked Commands (shared connection safety)
 
-`POST /` and `POST /pipeline` reject commands that would corrupt the shared Bun.redis connection:
+`POST /`, `POST /pipeline`, and `POST /multi-exec` reject commands that would corrupt the shared Bun.redis connection or DoS the proxy. The check lives in `src/commands.ts:checkBlockedCommand(command, firstArg?)`.
 
-- **Subscriber mode:** `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` (+ `UNSUBSCRIBE` variants)
-- **Monitor mode:** `MONITOR`
-- **Transaction state:** `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` (use `/multi-exec`)
-- **Database switching:** `SELECT` (would change DB for all concurrent users)
-- **Connection termination:** `QUIT`, `RESET`
+**Connection-state corruption:**
+- Subscriber mode: `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` (+ `UNSUBSCRIBE` variants) — use `/subscribe/:channel`
+- Monitor mode: `MONITOR`
+- Transaction state: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` — use `/multi-exec`
+- Database switching: `SELECT`
+- Connection termination: `QUIT`, `RESET`
 
-These return `400` with an error message. Transaction commands include a hint to use `/multi-exec`.
+**Blocking commands** (would hold the shared connection and starve other requests):
+- List/zset blocking pops: `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`
+- Replication wait: `WAIT`, `WAITAOF`
+
+**Server admin / DoS vectors:**
+- `SHUTDOWN` — terminates Redis
+- `REPLICAOF` / `SLAVEOF` — reconfigures replication
+- `FAILOVER` — manual failover
+- `DEBUG` — DEBUG SLEEP blocks the connection, DEBUG SEGFAULT crashes Redis
+- `CLIENT KILL` — could kill the proxy's own shared connection
+- `CLIENT PAUSE` / `CLIENT UNPAUSE` — server-wide pause
+- `CLIENT REPLY` — corrupts protocol on shared connection
+- `CLIENT NO-EVICT` / `CLIENT SETNAME` / `CLIENT TRACKING` / `CLIENT TRACKINGINFO` — per-connection state on shared connection
+
+Read-only `CLIENT` subcommands (`CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST`) remain available. All blocked commands return `400` with an explanatory error message; transaction and pubsub commands include a hint pointing at the correct endpoint.
 
 ### RESP3 → JSON Translation (critical)
 
@@ -200,13 +217,13 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-232 tests across three tiers:
+336 tests across three tiers:
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unit**              | 55    | RESP3 normalization, base64 encoding, SSE event formatting                                                                                                                        |
-| **Integration**       | 80    | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health)                                           |
-| **SDK Compatibility** | 97    | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
+| **Unit**              | 124   | RESP3 normalization, base64 encoding, SSE event formatting, blocked-command checks                                                                                                |
+| **Integration**       | 119   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health, auth, blocked commands)                   |
+| **SDK Compatibility** | 93    | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
 

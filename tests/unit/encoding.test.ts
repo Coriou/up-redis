@@ -94,9 +94,22 @@ describe("encodeResult", () => {
 		expect(Buffer.from(encoded as string, "base64").toString("utf-8")).toBe("你好")
 	})
 
-	// Boolean defensive (should not happen after normalizeResp3, but handle gracefully)
-	test("boolean passes through (defensive)", () => {
-		expect(encodeResult(true)).toBe(true)
-		expect(encodeResult(false)).toBe(false)
+	// Boolean defensive: normalizeResp3 normally runs first and converts these,
+	// but if encodeResult is called directly we still produce a JSON-safe value
+	// the SDK can decode (its decode() has no case "boolean").
+	test("boolean is normalized to integer (defensive)", () => {
+		expect(encodeResult(true)).toBe(1)
+		expect(encodeResult(false)).toBe(0)
+	})
+
+	test("bigint is base64-encoded as string (defensive)", () => {
+		const encoded = encodeResult(BigInt(999))
+		expect(encoded).toBe(Buffer.from("999", "utf-8").toString("base64"))
+	})
+
+	test("plain object becomes null (defensive)", () => {
+		// Should not happen after normalizeResp3, but defend against the case
+		// where it doesn't run — null is JSON-safe and the SDK handles it.
+		expect(encodeResult({ a: 1 })).toBe(null)
 	})
 })

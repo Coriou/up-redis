@@ -6,6 +6,10 @@ services:
     command: ["bun", "run", "--watch", "src/index.ts"]
     volumes:
       - ./src:/app/src:ro
+    # Expose to host for local development. Production compose uses `expose`
+    # only (for Coolify/reverse-proxy deployment).
+    ports:
+      - "8080:8080"
     environment:
       UPREDIS_LOG_LEVEL: debug
       UPREDIS_LOG_FORMAT: text

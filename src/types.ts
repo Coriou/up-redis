@@ -8,3 +8,13 @@ export type RedisCommand = [string, ...string[]]
 
 /** Pipeline/transaction body: array of commands */
 export type RedisPipeline = RedisCommand[]
+
+/**
+ * Hono Context.Variables augmentation: typed context values set by middleware.
+ * `requestId` is set by loggerMiddleware on every request.
+ */
+declare module "hono" {
+	interface ContextVariableMap {
+		requestId: string
+	}
+}
