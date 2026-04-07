@@ -20,6 +20,11 @@ pipelineRoutes.post("/pipeline", async (c) => {
     );
   }
 
+  // Short-circuit: empty pipeline needs no Redis call
+  if (body.length === 0) {
+    return c.json([]);
+  }
+
   const useBase64 = c.req.header("upstash-encoding") === "base64";
   const redis = getClient();
 

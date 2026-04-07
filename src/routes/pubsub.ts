@@ -16,8 +16,14 @@ const activeSubscriptions = new Set<ActiveSubscription>();
 
 export const pubsubRoutes = new Hono();
 
+const MAX_CHANNEL_NAME_LENGTH = 512;
+
 async function handleSubscribe(c: Context) {
   const channel = c.req.param("channel") as string;
+
+  if (!channel || channel.length > MAX_CHANNEL_NAME_LENGTH) {
+    return c.json({ error: "Invalid channel name" }, 400);
+  }
 
   return streamSSE(c, async (stream) => {
     const sub = await getClient().duplicate();

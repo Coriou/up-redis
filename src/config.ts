@@ -14,6 +14,7 @@ const envSchema = z.object({
     .default(30000),
   UPREDIS_REQUEST_TIMEOUT: z.coerce.number().int().nonnegative().default(30000),
   UPREDIS_METRICS: z.enum(["true", "false"]).default("false"),
+  UPREDIS_MAX_BODY_SIZE: z.coerce.number().int().positive().default(10_485_760),
 });
 
 const parsed = envSchema.parse(process.env);
@@ -28,4 +29,5 @@ export const config = {
   shutdownTimeout: parsed.UPREDIS_SHUTDOWN_TIMEOUT,
   requestTimeout: parsed.UPREDIS_REQUEST_TIMEOUT,
   metricsEnabled: parsed.UPREDIS_METRICS === "true",
+  maxBodySize: parsed.UPREDIS_MAX_BODY_SIZE,
 };

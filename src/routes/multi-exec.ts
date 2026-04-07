@@ -26,6 +26,16 @@ multiExecRoutes.post("/multi-exec", async (c) => {
     return c.json([]);
   }
 
+  // Validate all commands before opening a dedicated connection
+  for (const cmd of body) {
+    if (!Array.isArray(cmd) || cmd.length === 0) {
+      return c.json(
+        { error: "Each transaction command must be a non-empty array" },
+        400,
+      );
+    }
+  }
+
   const useBase64 = c.req.header("upstash-encoding") === "base64";
 
   // Dedicated connection per transaction to prevent command interleaving (SRH #25)
@@ -35,14 +45,6 @@ multiExecRoutes.post("/multi-exec", async (c) => {
     await tx.send("MULTI", []);
 
     for (const cmd of body) {
-      if (!Array.isArray(cmd) || cmd.length === 0) {
-        // Discard the transaction on invalid command format
-        await tx.send("DISCARD", []);
-        return c.json(
-          { error: "Each transaction command must be a non-empty array" },
-          400,
-        );
-      }
       const command = String(cmd[0]);
       const args = cmd.slice(1).map(String);
       await tx.send(command, args); // returns "QUEUED"

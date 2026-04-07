@@ -65,15 +65,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 
 ### Endpoints
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /` | Single Redis command (JSON array body) |
-| `POST /pipeline` | Batch commands (2D JSON array body) |
-| `POST /multi-exec` | Transaction (2D JSON array body, wrapped in MULTI/EXEC) |
-| `GET\|POST /subscribe/:channel` | PubSub subscription (SSE stream, Upstash-compatible) |
-| `GET /` | Health check (SRH compat: welcome message) |
-| `GET /health` | Rich health check (Redis probe + shutdown state) |
-| `GET /metrics` | Prometheus metrics (opt-in) |
+| Endpoint                        | Purpose                                                 |
+| ------------------------------- | ------------------------------------------------------- |
+| `POST /`                        | Single Redis command (JSON array body)                  |
+| `POST /pipeline`                | Batch commands (2D JSON array body)                     |
+| `POST /multi-exec`              | Transaction (2D JSON array body, wrapped in MULTI/EXEC) |
+| `GET\|POST /subscribe/:channel` | PubSub subscription (SSE stream, Upstash-compatible)    |
+| `GET /`                         | Health check (SRH compat: welcome message)              |
+| `GET /health`                   | Rich health check (Redis probe + shutdown state)        |
+| `GET /metrics`                  | Prometheus metrics (opt-in)                             |
 
 ### RESP3 → JSON Translation (critical)
 
@@ -91,6 +91,7 @@ Commands that return Maps in RESP3 (uniform handling via normalizeResp3):
 ### Base64 Encoding Rules
 
 When `Upstash-Encoding: base64` header is present:
+
 - **Strings:** base64-encode (including "OK", "QUEUED" — SDK handles both)
 - **Numbers:** never encode (must be JSON number)
 - **Null:** never encode (must be JSON null)
@@ -100,6 +101,7 @@ When `Upstash-Encoding: base64` header is present:
 ### Transaction Design (MULTI/EXEC)
 
 Each transaction gets a dedicated Bun.redis connection via `duplicate()`:
+
 1. `const tx = await mainClient.duplicate()`
 2. `await tx.send("MULTI", [])`
 3. Queue each command: `await tx.send(cmd, args)` → "QUEUED"
@@ -111,6 +113,7 @@ This prevents the command interleaving bug (SRH issue #25) that occurs when conc
 ### PubSub Design (GET/POST /subscribe/:channel)
 
 Each subscription gets a dedicated Bun.redis connection via `duplicate()`:
+
 1. Client sends `GET` or `POST /subscribe/my-channel`
 2. Server returns SSE response immediately via Hono's `streamSSE()`
 3. Async callback creates dedicated connection: `const sub = await mainClient.duplicate()`
@@ -159,17 +162,18 @@ tests/
 
 All prefixed `UPREDIS_`:
 
-| Variable | Default | Required | Purpose |
-|----------|---------|----------|---------|
-| `UPREDIS_TOKEN` | - | **Yes** | Bearer token for API auth |
-| `UPREDIS_REDIS_URL` | `redis://localhost:6379` | No | Redis connection |
-| `UPREDIS_PORT` | `8080` | No | HTTP listen port |
-| `UPREDIS_HOST` | `0.0.0.0` | No | HTTP listen host |
-| `UPREDIS_LOG_LEVEL` | `info` | No | `debug`, `info`, `warn`, `error` |
-| `UPREDIS_LOG_FORMAT` | `json` | No | `json` (structured) or `text` (human-readable) |
-| `UPREDIS_SHUTDOWN_TIMEOUT` | `30000` | No | Max ms to wait for request drain |
-| `UPREDIS_REQUEST_TIMEOUT` | `30000` | No | Per-request timeout in ms (`0` = disabled) |
-| `UPREDIS_METRICS` | `false` | No | Enable Prometheus `/metrics` endpoint |
+| Variable                   | Default                  | Required | Purpose                                        |
+| -------------------------- | ------------------------ | -------- | ---------------------------------------------- |
+| `UPREDIS_TOKEN`            | -                        | **Yes**  | Bearer token for API auth                      |
+| `UPREDIS_REDIS_URL`        | `redis://localhost:6379` | No       | Redis connection                               |
+| `UPREDIS_PORT`             | `8080`                   | No       | HTTP listen port                               |
+| `UPREDIS_HOST`             | `0.0.0.0`                | No       | HTTP listen host                               |
+| `UPREDIS_LOG_LEVEL`        | `info`                   | No       | `debug`, `info`, `warn`, `error`               |
+| `UPREDIS_LOG_FORMAT`       | `json`                   | No       | `json` (structured) or `text` (human-readable) |
+| `UPREDIS_SHUTDOWN_TIMEOUT` | `30000`                  | No       | Max ms to wait for request drain               |
+| `UPREDIS_REQUEST_TIMEOUT`  | `30000`                  | No       | Per-request timeout in ms (`0` = disabled)     |
+| `UPREDIS_METRICS`          | `false`                  | No       | Enable Prometheus `/metrics` endpoint          |
+| `UPREDIS_MAX_BODY_SIZE`    | `10485760`               | No       | Max request body size in bytes (10MB)          |
 
 ## Bun.redis Gotchas
 
@@ -186,11 +190,11 @@ Inherited from up-vector experience — critical for correctness:
 
 232 tests across three tiers:
 
-| Tier | Tests | Purpose |
-|------|-------|---------|
-| **Unit** | 55 | RESP3 normalization, base64 encoding, SSE event formatting |
-| **Integration** | 80 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health) |
-| **SDK Compatibility** | 97 | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
+| Tier                  | Tests | Purpose                                                                                                                                                                           |
+| --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Unit**              | 55    | RESP3 normalization, base64 encoding, SSE event formatting                                                                                                                        |
+| **Integration**       | 80    | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health)                                           |
+| **SDK Compatibility** | 97    | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
 
