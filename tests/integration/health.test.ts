@@ -145,6 +145,43 @@ describe("Auth", () => {
 	})
 })
 
+describe("X-Request-ID handling", () => {
+	test("safe X-Request-ID is reflected", async () => {
+		const id = "trace-abc-123_42.foo"
+		const res = await fetch(`${BASE_URL}/`, {
+			headers: { "X-Request-ID": id },
+		})
+		expect(res.headers.get("x-request-id")).toBe(id)
+	})
+
+	test("missing X-Request-ID gets a generated UUID", async () => {
+		const res = await fetch(`${BASE_URL}/`)
+		const id = res.headers.get("x-request-id")
+		expect(id).toBeTruthy()
+		// UUID v4 pattern
+		expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+	})
+
+	test("X-Request-ID with disallowed characters is replaced with a fresh UUID", async () => {
+		const res = await fetch(`${BASE_URL}/`, {
+			headers: { "X-Request-ID": "with spaces and !@#$%" },
+		})
+		const id = res.headers.get("x-request-id")
+		expect(id).not.toBe("with spaces and !@#$%")
+		expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+	})
+
+	test("X-Request-ID over 128 chars is replaced with a fresh UUID", async () => {
+		const tooLong = "a".repeat(200)
+		const res = await fetch(`${BASE_URL}/`, {
+			headers: { "X-Request-ID": tooLong },
+		})
+		const id = res.headers.get("x-request-id")
+		expect(id).not.toBe(tooLong)
+		expect((id ?? "").length).toBeLessThanOrEqual(128)
+	})
+})
+
 describe("Security headers", () => {
 	test("X-Content-Type-Options: nosniff", async () => {
 		const res = await fetch(`${BASE_URL}/`)
@@ -170,6 +207,43 @@ describe("Security headers", () => {
 			},
 			body: JSON.stringify(["PING"]),
 		})
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+		expect(res.headers.get("x-frame-options")).toBe("DENY")
+		expect(res.headers.get("cache-control")).toBe("no-store")
+	})
+
+	test("security headers on 401 responses", async () => {
+		const res = await fetch(`${BASE_URL}/`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(["PING"]),
+		})
+		expect(res.status).toBe(401)
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+		expect(res.headers.get("x-frame-options")).toBe("DENY")
+		expect(res.headers.get("cache-control")).toBe("no-store")
+	})
+
+	test("security headers on 404 responses", async () => {
+		const res = await fetch(`${BASE_URL}/does-not-exist`, {
+			headers: { Authorization: `Bearer ${TOKEN}` },
+		})
+		expect(res.status).toBe(404)
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+		expect(res.headers.get("x-frame-options")).toBe("DENY")
+		expect(res.headers.get("cache-control")).toBe("no-store")
+	})
+
+	test("security headers on 400 (bad command) responses", async () => {
+		const res = await fetch(`${BASE_URL}/`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${TOKEN}`,
+			},
+			body: JSON.stringify(["NOTACOMMAND"]),
+		})
+		expect(res.status).toBe(400)
 		expect(res.headers.get("x-content-type-options")).toBe("nosniff")
 		expect(res.headers.get("x-frame-options")).toBe("DENY")
 		expect(res.headers.get("cache-control")).toBe("no-store")

@@ -12,8 +12,10 @@ import { log } from "../logger"
  */
 export const errorHandler: ErrorHandler = (err, c) => {
 	if (err instanceof HTTPException) {
-		const message = err.message || "Unauthorized"
-		return c.json({ error: message }, err.status)
+		// Don't hardcode "Unauthorized" — HTTPException can have any 4xx/5xx status.
+		// Fall back to a generic placeholder so a future HTTPException(403) doesn't
+		// surface as "Unauthorized".
+		return c.json({ error: err.message || "Error" }, err.status)
 	}
 
 	if (err instanceof ZodError) {

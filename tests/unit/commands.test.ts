@@ -174,6 +174,14 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("CLIENT", "SETNAME")).not.toBe(null)
 	})
 
+	test("CLIENT SETINFO is blocked (per-connection state on shared connection)", () => {
+		expect(checkBlockedCommand("CLIENT", "SETINFO")).not.toBe(null)
+	})
+
+	test("CLIENT NO-TOUCH is blocked (per-connection state on shared connection)", () => {
+		expect(checkBlockedCommand("CLIENT", "NO-TOUCH")).not.toBe(null)
+	})
+
 	test("CLIENT subcommand check is case insensitive", () => {
 		expect(checkBlockedCommand("CLIENT", "kill")).not.toBe(null)
 		expect(checkBlockedCommand("client", "Kill")).not.toBe(null)
@@ -198,6 +206,71 @@ describe("checkBlockedCommand", () => {
 
 	test("CLIENT without subcommand is allowed", () => {
 		expect(checkBlockedCommand("CLIENT")).toBe(null)
+	})
+
+	// CLUSTER subcommands — read-only allowed, topology mutators blocked
+	test("CLUSTER FAILOVER is blocked", () => {
+		const msg = checkBlockedCommand("CLUSTER", "FAILOVER")
+		expect(msg).not.toBe(null)
+		expect(msg).toContain("CLUSTER FAILOVER")
+	})
+
+	test("CLUSTER RESET is blocked", () => {
+		expect(checkBlockedCommand("CLUSTER", "RESET")).not.toBe(null)
+	})
+
+	test("CLUSTER MEET is blocked", () => {
+		expect(checkBlockedCommand("CLUSTER", "MEET")).not.toBe(null)
+	})
+
+	test("CLUSTER FORGET is blocked", () => {
+		expect(checkBlockedCommand("CLUSTER", "FORGET")).not.toBe(null)
+	})
+
+	test("CLUSTER REPLICATE is blocked", () => {
+		expect(checkBlockedCommand("CLUSTER", "REPLICATE")).not.toBe(null)
+	})
+
+	test("CLUSTER ADDSLOTS is blocked", () => {
+		expect(checkBlockedCommand("CLUSTER", "ADDSLOTS")).not.toBe(null)
+	})
+
+	test("CLUSTER DELSLOTS is blocked", () => {
+		expect(checkBlockedCommand("CLUSTER", "DELSLOTS")).not.toBe(null)
+	})
+
+	test("CLUSTER SETSLOT is blocked", () => {
+		expect(checkBlockedCommand("CLUSTER", "SETSLOT")).not.toBe(null)
+	})
+
+	test("CLUSTER FAILOVER subcommand check is case insensitive", () => {
+		expect(checkBlockedCommand("cluster", "failover")).not.toBe(null)
+		expect(checkBlockedCommand("Cluster", "Failover")).not.toBe(null)
+	})
+
+	// Allowed CLUSTER subcommands (read-only)
+	test("CLUSTER INFO is allowed", () => {
+		expect(checkBlockedCommand("CLUSTER", "INFO")).toBe(null)
+	})
+
+	test("CLUSTER NODES is allowed", () => {
+		expect(checkBlockedCommand("CLUSTER", "NODES")).toBe(null)
+	})
+
+	test("CLUSTER MYID is allowed", () => {
+		expect(checkBlockedCommand("CLUSTER", "MYID")).toBe(null)
+	})
+
+	test("CLUSTER SHARDS is allowed", () => {
+		expect(checkBlockedCommand("CLUSTER", "SHARDS")).toBe(null)
+	})
+
+	test("CLUSTER SLOTS is allowed", () => {
+		expect(checkBlockedCommand("CLUSTER", "SLOTS")).toBe(null)
+	})
+
+	test("CLUSTER without subcommand is allowed", () => {
+		expect(checkBlockedCommand("CLUSTER")).toBe(null)
 	})
 
 	// Allowed commands

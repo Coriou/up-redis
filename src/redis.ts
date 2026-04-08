@@ -37,17 +37,56 @@ export async function initRedis(): Promise<void> {
 
 	// Bound startup so a hung Redis doesn't wedge the entire process forever.
 	// connectionTimeout above bounds the TCP handshake; this bounds PING reply.
+	let pingTimer: ReturnType<typeof setTimeout> | undefined
 	const ping = client.ping()
+	// Suppress unhandled rejection on the original ping if the timeout wins.
+	ping.catch(() => {})
 	const timeout = new Promise<string>((_, reject) => {
-		setTimeout(
+		pingTimer = setTimeout(
 			() => reject(new Error(`Redis PING timed out after ${STARTUP_PING_TIMEOUT_MS}ms`)),
 			STARTUP_PING_TIMEOUT_MS,
 		)
 	})
-	const pong = await Promise.race([ping, timeout])
-	if (pong !== "PONG") {
-		throw new Error(`Redis PING failed: ${pong}`)
+	try {
+		const pong = await Promise.race([ping, timeout])
+		if (pong !== "PONG") {
+			throw new Error(`Redis PING failed: ${pong}`)
+		}
+	} finally {
+		if (pingTimer) clearTimeout(pingTimer)
 	}
+}
+
+/**
+ * Create a dedicated Redis connection for use cases that need an isolated
+ * connection: MULTI/EXEC transactions and PubSub subscriptions.
+ *
+ * Both autoReconnect and enableOfflineQueue are disabled because:
+ *
+ * - Subscriber state is per-connection on the Redis server. If the connection
+ *   silently reconnects, the server forgets the subscription and the SSE
+ *   stream sits idle waiting for messages that never arrive.
+ * - MULTI state is per-connection. A reconnect mid-transaction would either
+ *   send queued commands without MULTI context (corrupting state) or run them
+ *   on a fresh connection (silent transaction abort).
+ *
+ * Disabling auto-reconnect makes the failure mode loud: any drop surfaces as
+ * an error and `onclose` fires so cleanup paths can run.
+ *
+ * Auto-pipelining is disabled because dedicated connections handle
+ * single-flight command sequences (subscribe, then wait; or MULTI → cmds → EXEC),
+ * not concurrent traffic, so batching has nothing to batch.
+ */
+export async function createDedicatedConnection(): Promise<RedisClient> {
+	const conn = new RedisClient(config.redisUrl, {
+		connectionTimeout: 10_000,
+		autoReconnect: false,
+		maxRetries: 0,
+		enableAutoPipelining: false,
+		enableOfflineQueue: false,
+	})
+	await conn.connect()
+	return conn
 }
 
 export async function isRedisHealthy(): Promise<boolean> {

@@ -27,7 +27,9 @@
  *    - CLIENT KILL — could kill the proxy's own shared connection
  *    - CLIENT PAUSE / CLIENT UNPAUSE — server-wide pause affects everyone
  *    - CLIENT REPLY — changes reply behavior, corrupts protocol
- *    - CLIENT NO-EVICT — per-connection state leak on shared connection
+ *    - CLIENT NO-EVICT / NO-TOUCH / SETINFO / SETNAME — per-connection state
+ *      leaks across all proxy users on the shared connection
+ *    - CLUSTER FAILOVER / RESET / MEET / FORGET — cluster topology changes
  */
 
 /** Single-word blocked commands (lookup by uppercased command name). */
@@ -72,16 +74,48 @@ const BLOCKED_COMMANDS = new Set([
 	"DEBUG",
 ])
 
-/** CLIENT subcommands that are blocked (CLIENT itself is allowed for read-only subs). */
+/**
+ * CLIENT subcommands that are blocked. CLIENT itself is allowed for read-only
+ * introspection (INFO, GETNAME, ID, LIST, GETREDIR).
+ *
+ * Per-connection mutators (SETNAME, SETINFO, NO-EVICT, NO-TOUCH, REPLY,
+ * TRACKING) leak state across all proxy users since the connection is shared.
+ * Server-wide controls (KILL, PAUSE, UNPAUSE) affect everyone.
+ */
 const BLOCKED_CLIENT_SUBCOMMANDS = new Set([
 	"KILL",
 	"PAUSE",
 	"UNPAUSE",
 	"REPLY",
 	"NO-EVICT",
+	"NO-TOUCH",
 	"SETNAME",
+	"SETINFO",
 	"TRACKING",
 	"TRACKINGINFO",
+])
+
+/**
+ * CLUSTER subcommands that are blocked. Read-only introspection (INFO, NODES,
+ * MYID, SLOTS, SHARDS, COUNTKEYSINSLOT, GETKEYSINSLOT, KEYSLOT, LINKS, SLAVES,
+ * REPLICAS, COUNT-FAILURE-REPORTS) remains available.
+ *
+ * Topology mutators are blocked because they're equivalent in damage to the
+ * single-word admin commands like FAILOVER and SHUTDOWN.
+ */
+const BLOCKED_CLUSTER_SUBCOMMANDS = new Set([
+	"FAILOVER",
+	"RESET",
+	"MEET",
+	"FORGET",
+	"REPLICATE",
+	"ADDSLOTS",
+	"ADDSLOTSRANGE",
+	"DELSLOTS",
+	"DELSLOTSRANGE",
+	"FLUSHSLOTS",
+	"SETSLOT",
+	"BUMPEPOCH",
 ])
 
 const TRANSACTION_HINT = "Use POST /multi-exec for transactions"
@@ -119,8 +153,8 @@ const ADMIN_CMDS = new Set(["SHUTDOWN", "REPLICAOF", "SLAVEOF", "FAILOVER", "DEB
  * is blocked on the shared connection.
  *
  * Returns an error message if blocked, or null if allowed. The first argument
- * is inspected for `CLIENT KILL`, `CLIENT PAUSE`, etc. — these are blocked
- * even though `CLIENT` itself (CLIENT GETNAME, CLIENT INFO) is allowed.
+ * is inspected for `CLIENT KILL`, `CLUSTER FAILOVER`, etc. — these are blocked
+ * even though the parent command (CLIENT GETNAME, CLUSTER INFO) is allowed.
  */
 export function checkBlockedCommand(command: string, firstArg?: string): string | null {
 	const upper = command.toUpperCase()
@@ -143,11 +177,20 @@ export function checkBlockedCommand(command: string, firstArg?: string): string 
 	}
 
 	// CLIENT subcommands: allow read-only ones (CLIENT INFO, CLIENT GETNAME, CLIENT ID, CLIENT LIST),
-	// block dangerous ones (CLIENT KILL, CLIENT PAUSE, CLIENT REPLY, CLIENT NO-EVICT, CLIENT SETNAME)
+	// block dangerous ones (CLIENT KILL, CLIENT PAUSE, CLIENT REPLY, CLIENT NO-EVICT, CLIENT SETNAME, CLIENT SETINFO, etc.)
 	if (upper === "CLIENT" && firstArg) {
 		const sub = firstArg.toUpperCase()
 		if (BLOCKED_CLIENT_SUBCOMMANDS.has(sub)) {
 			return `CLIENT ${sub} is not allowed — it would affect the shared Redis connection or other clients`
+		}
+	}
+
+	// CLUSTER subcommands: allow read-only introspection (INFO, NODES, etc.),
+	// block topology mutators (FAILOVER, RESET, MEET, FORGET, etc.)
+	if (upper === "CLUSTER" && firstArg) {
+		const sub = firstArg.toUpperCase()
+		if (BLOCKED_CLUSTER_SUBCOMMANDS.has(sub)) {
+			return `CLUSTER ${sub} is not allowed — ${ADMIN_REASON}`
 		}
 	}
 

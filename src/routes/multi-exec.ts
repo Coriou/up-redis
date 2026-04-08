@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { checkBlockedCommand } from "../commands"
 import { log } from "../logger"
-import { getClient } from "../redis"
+import { createDedicatedConnection } from "../redis"
 import { encodeResult } from "../translate/encoding"
 import { normalizeResp3 } from "../translate/response"
 
@@ -44,10 +44,12 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 		validated.push({ command, args })
 	}
 
-	const useBase64 = c.req.header("upstash-encoding") === "base64"
+	const useBase64 = c.req.header("upstash-encoding")?.toLowerCase() === "base64"
 
-	// Dedicated connection per transaction to prevent command interleaving (SRH #25)
-	const tx = await getClient().duplicate()
+	// Dedicated connection per transaction to prevent command interleaving (SRH #25).
+	// autoReconnect is disabled (see redis.ts) so a mid-transaction reconnect can't
+	// silently corrupt MULTI state.
+	const tx = await createDedicatedConnection()
 
 	try {
 		await tx.send("MULTI", [])

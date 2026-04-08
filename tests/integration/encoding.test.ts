@@ -24,6 +24,48 @@ describe("Base64 encoding roundtrip", () => {
 		expect(decoded).toBe("hello world")
 	})
 
+	test("Upstash-Encoding header is case-insensitive (BASE64)", async () => {
+		const key = k()
+		await cmd("SET", key, "hello")
+		const { data } = await api("POST", "/", ["GET", key], { "Upstash-Encoding": "BASE64" })
+		const result = (data as { result: unknown }).result
+		expect(result).toBe(Buffer.from("hello").toString("base64"))
+	})
+
+	test("Upstash-Encoding header is case-insensitive (Base64)", async () => {
+		const key = k()
+		await cmd("SET", key, "world")
+		const { data } = await api("POST", "/", ["GET", key], { "Upstash-Encoding": "Base64" })
+		const result = (data as { result: unknown }).result
+		expect(result).toBe(Buffer.from("world").toString("base64"))
+	})
+
+	test("Upstash-Encoding header on pipeline is case-insensitive", async () => {
+		const key = k()
+		await cmd("SET", key, "pipe")
+		const { data } = await api("POST", "/pipeline", [["GET", key]], {
+			"Upstash-Encoding": "BASE64",
+		})
+		const results = data as Array<{ result?: unknown }>
+		expect(results[0].result).toBe(Buffer.from("pipe").toString("base64"))
+	})
+
+	test("Upstash-Encoding header on multi-exec is case-insensitive", async () => {
+		const key = k()
+		const { data } = await api(
+			"POST",
+			"/multi-exec",
+			[
+				["SET", key, "tx"],
+				["GET", key],
+			],
+			{ "Upstash-Encoding": "BASE64" },
+		)
+		const results = data as Array<{ result?: unknown }>
+		expect(results[0].result).toBe(Buffer.from("OK").toString("base64"))
+		expect(results[1].result).toBe(Buffer.from("tx").toString("base64"))
+	})
+
 	test("unicode roundtrip with base64", async () => {
 		const key = k()
 		await cmd("SET", key, "café")

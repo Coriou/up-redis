@@ -23,7 +23,7 @@ pipelineRoutes.post("/pipeline", async (c) => {
 		return c.json([])
 	}
 
-	const useBase64 = c.req.header("upstash-encoding") === "base64"
+	const useBase64 = c.req.header("upstash-encoding")?.toLowerCase() === "base64"
 	const redis = getClient()
 
 	// Fire all commands concurrently to leverage Bun.redis auto-pipelining.

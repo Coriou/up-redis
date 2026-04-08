@@ -10,7 +10,7 @@ Modern rewrite of [SRH](https://github.com/hiett/serverless-redis-http), sibling
 - **Runtime:** Bun 1.2+ (native TypeScript)
 - **HTTP:** Hono v4
 - **Redis client:** `Bun.redis` (native, RESP3, auto-pipelining, zero-dep)
-- **Validation:** Zod v3
+- **Validation:** Zod v4
 - **Linting/Format:** Biome v1
 - **Testing:** `bun test` (built-in, Jest-compatible)
 - **Container:** Docker (oven/bun:alpine) + Redis 7
@@ -59,7 +59,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 
 - **Response envelope:** `{ "result": <data> }` on success, `{ "error": "<msg>" }` on error (HTTP 400)
 - **Auth:** Bearer token via `Authorization` header, validated against `UPREDIS_TOKEN` env var
-- **Connection model:** Single shared Bun.redis connection with auto-pipelining for commands/pipelines, dedicated connection per transaction (MULTI/EXEC) via `duplicate()` to prevent interleaving, dedicated connection per PubSub subscription via `duplicate()` for long-lived SSE streams
+- **Connection model:** Single shared Bun.redis connection with auto-pipelining for commands/pipelines, dedicated connection per transaction (MULTI/EXEC) and per PubSub subscription via `createDedicatedConnection()` (`new RedisClient` with `autoReconnect: false`) to prevent interleaving and to make connection drops loud rather than silent (a reconnect would lose subscriber/transaction state)
 - **RESP3 → RESP2 translation:** Bun.redis speaks RESP3 but the SDK expects RESP2-compatible JSON — normalize Maps to flat arrays, Booleans to 0/1, recursively
 - **Base64 encoding:** When `Upstash-Encoding: base64` header present, all string values in responses are base64-encoded (numbers, null pass through)
 
@@ -100,9 +100,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 - `CLIENT KILL` — could kill the proxy's own shared connection
 - `CLIENT PAUSE` / `CLIENT UNPAUSE` — server-wide pause
 - `CLIENT REPLY` — corrupts protocol on shared connection
-- `CLIENT NO-EVICT` / `CLIENT SETNAME` / `CLIENT TRACKING` / `CLIENT TRACKINGINFO` — per-connection state on shared connection
+- `CLIENT NO-EVICT` / `CLIENT NO-TOUCH` / `CLIENT SETNAME` / `CLIENT SETINFO` / `CLIENT TRACKING` / `CLIENT TRACKINGINFO` — per-connection state leaks across all proxy users
+- `CLUSTER FAILOVER` / `RESET` / `MEET` / `FORGET` / `REPLICATE` / `ADDSLOTS` / `DELSLOTS` / `SETSLOT` / etc. — cluster topology mutations
 
-Read-only `CLIENT` subcommands (`CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST`) remain available. All blocked commands return `400` with an explanatory error message; transaction and pubsub commands include a hint pointing at the correct endpoint.
+Read-only `CLIENT` subcommands (`CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST`) and read-only `CLUSTER` subcommands (`CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER MYID`, `CLUSTER SLOTS`, `CLUSTER SHARDS`, etc.) remain available. All blocked commands return `400` with an explanatory error message; transaction and pubsub commands include a hint pointing at the correct endpoint.
 
 ### RESP3 → JSON Translation (critical)
 
@@ -129,23 +130,23 @@ When `Upstash-Encoding: base64` header is present:
 
 ### Transaction Design (MULTI/EXEC)
 
-Each transaction gets a dedicated Bun.redis connection via `duplicate()`:
+Each transaction gets a dedicated Bun.redis connection via `createDedicatedConnection()`:
 
-1. `const tx = await mainClient.duplicate()`
+1. `const tx = await createDedicatedConnection()` — `new RedisClient` with `autoReconnect: false`
 2. `await tx.send("MULTI", [])`
 3. Queue each command: `await tx.send(cmd, args)` → "QUEUED"
 4. `const results = await tx.send("EXEC", [])` → result array
 5. `tx.close()` in `finally` block
 
-This prevents the command interleaving bug (SRH issue #25) that occurs when concurrent transactions share a connection.
+This prevents the command interleaving bug (SRH issue #25) that occurs when concurrent transactions share a connection. `autoReconnect` is disabled because a silent reconnect mid-transaction would either run queued commands without `MULTI` context (corrupting state) or send them on a fresh connection (silent transaction abort).
 
 ### PubSub Design (GET/POST /subscribe/:channel)
 
-Each subscription gets a dedicated Bun.redis connection via `duplicate()`:
+Each subscription gets a dedicated Bun.redis connection via `createDedicatedConnection()` (`autoReconnect: false`):
 
 1. Client sends `GET` or `POST /subscribe/my-channel`
 2. Server returns SSE response immediately via Hono's `streamSSE()`
-3. Async callback creates dedicated connection: `const sub = await mainClient.duplicate()`
+3. Async callback creates dedicated connection: `const sub = await createDedicatedConnection()`
 4. `await sub.subscribe(channel, listener)` — listener forwards each message as SSE
 5. SSE format: `data: subscribe,{channel},{count}\n\n` then `data: message,{channel},{content}\n\n`
 6. Blocks via `Promise.race([clientDisconnect, redisClose])` until stream ends
@@ -217,12 +218,12 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-336 tests across three tiers:
+369 tests across three tiers:
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unit**              | 124   | RESP3 normalization, base64 encoding, SSE event formatting, blocked-command checks                                                                                                |
-| **Integration**       | 119   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health, auth, blocked commands)                   |
+| **Unit**              | 141   | RESP3 normalization, base64 encoding, SSE event formatting, blocked-command checks                                                                                                |
+| **Integration**       | 135   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health, auth, blocked commands)                   |
 | **SDK Compatibility** | 93    | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.

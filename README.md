@@ -107,7 +107,7 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 232+ tests including 97 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 369 tests including 93 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
@@ -125,9 +125,9 @@ All Redis commands are forwarded transparently. up-redis is a proxy — it doesn
 
 - **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `SELECT`, `QUIT`, `RESET`
 - **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF` — these would hold the shared connection and starve every other request
-- **Server admin / DoS vectors:** `SHUTDOWN`, `REPLICAOF`/`SLAVEOF`, `FAILOVER`, `DEBUG`, `MONITOR`, `CLIENT KILL`/`PAUSE`/`UNPAUSE`/`REPLY`/`NO-EVICT`/`SETNAME`/`TRACKING`
+- **Server admin / DoS vectors:** `SHUTDOWN`, `REPLICAOF`/`SLAVEOF`, `FAILOVER`, `DEBUG`, `MONITOR`, `CLIENT KILL`/`PAUSE`/`UNPAUSE`/`REPLY`/`NO-EVICT`/`NO-TOUCH`/`SETNAME`/`SETINFO`/`TRACKING`, `CLUSTER FAILOVER`/`RESET`/`MEET`/`FORGET`/`REPLICATE`/`ADDSLOTS`/`DELSLOTS`/`SETSLOT`
 
-Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST` remain available.
+Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST` remain available, as do read-only `CLUSTER` subcommands like `CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER MYID`, `CLUSTER SLOTS`, `CLUSTER SHARDS`.
 
 ### Why not SRH?
 
@@ -142,7 +142,7 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
 | Docker image | ~100MB | ~50MB (Bun Alpine) |
-| Tests | External | 232 built-in (unit + integration + SDK compat) |
+| Tests | External | 369 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
@@ -249,12 +249,12 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-336 tests across three tiers:
+369 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 124 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
-| **Integration** | 119 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
+| **Unit** | 141 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
+| **Integration** | 135 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
 | **SDK Compatibility** | 93 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class) |
 
 ```bash

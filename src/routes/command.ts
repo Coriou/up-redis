@@ -30,7 +30,7 @@ commandRoutes.post("/", async (c) => {
 	try {
 		const raw = await getClient().send(command, args)
 		let result = normalizeResp3(raw)
-		if (c.req.header("upstash-encoding") === "base64") {
+		if (c.req.header("upstash-encoding")?.toLowerCase() === "base64") {
 			result = encodeResult(result)
 		}
 		return c.json({ result })

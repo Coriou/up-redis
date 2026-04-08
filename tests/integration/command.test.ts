@@ -235,6 +235,44 @@ describe("POST / (blocked commands)", () => {
 		expect((data as { error: string }).error).toContain("CLIENT PAUSE")
 	})
 
+	test("CLIENT SETINFO is blocked (would leak across users on shared connection)", async () => {
+		const { status, data } = await api("POST", "/", ["CLIENT", "SETINFO", "lib-name", "evil"])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("CLIENT SETINFO")
+	})
+
+	test("CLIENT NO-TOUCH is blocked (per-connection state on shared connection)", async () => {
+		const { status, data } = await api("POST", "/", ["CLIENT", "NO-TOUCH", "ON"])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("CLIENT NO-TOUCH")
+	})
+
+	test("CLUSTER FAILOVER is blocked", async () => {
+		const { status, data } = await api("POST", "/", ["CLUSTER", "FAILOVER"])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("CLUSTER FAILOVER")
+	})
+
+	test("CLUSTER RESET is blocked", async () => {
+		const { status, data } = await api("POST", "/", ["CLUSTER", "RESET"])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("CLUSTER RESET")
+	})
+
+	test("CLUSTER INFO is allowed by the proxy (Redis may still error if cluster mode is off)", async () => {
+		// On a non-cluster Redis, CLUSTER INFO returns "ERR This instance has cluster
+		// support disabled". The point of the test is that the proxy itself does NOT
+		// block CLUSTER INFO — the error must come from Redis, not us.
+		const { status, data } = await api("POST", "/", ["CLUSTER", "INFO"])
+		if (status === 200) {
+			// Cluster mode enabled — got info back
+			expect((data as { result: string }).result).toBeDefined()
+		} else {
+			// Cluster mode disabled — Redis returns error, but not the proxy's block message
+			expect((data as { error: string }).error).not.toContain("not allowed")
+		}
+	})
+
 	test("CLIENT INFO is allowed (read-only subcommand)", async () => {
 		const { status } = await api("POST", "/", ["CLIENT", "INFO"])
 		expect(status).toBe(200)

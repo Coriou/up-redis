@@ -3,7 +3,7 @@ import type { Context } from "hono"
 import { Hono } from "hono"
 import { type SSEStreamingApi, streamSSE } from "hono/streaming"
 import { log } from "../logger"
-import { getClient } from "../redis"
+import { createDedicatedConnection } from "../redis"
 import { shuttingDown } from "../shutdown"
 import { formatMessageEvent, formatSubscribeEvent } from "../translate/pubsub"
 
@@ -51,9 +51,12 @@ async function handleSubscribe(c: Context) {
 	return streamSSE(c, async (stream) => {
 		let sub: RedisClient
 		try {
-			sub = await getClient().duplicate()
+			// Dedicated connection with autoReconnect disabled — see redis.ts.
+			// A reconnect would silently lose the subscription on the Redis side
+			// and the SSE stream would sit idle forever.
+			sub = await createDedicatedConnection()
 		} catch (err) {
-			log.error("pubsub duplicate failed", {
+			log.error("pubsub dedicated connection failed", {
 				requestId: c.get("requestId"),
 				channel,
 				error: err instanceof Error ? err.message : String(err),

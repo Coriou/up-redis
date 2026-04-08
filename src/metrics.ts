@@ -3,6 +3,20 @@ import { config } from "./config"
 // Standard Prometheus histogram buckets (seconds)
 const DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
 
+/**
+ * Bound the cardinality of the `method` label. Without normalization, an
+ * attacker (or buggy client) could send requests with arbitrary HTTP methods
+ * and create unlimited counter/histogram entries — a memory exhaustion vector
+ * on a `/metrics` endpoint that is intentionally unauthenticated for
+ * Prometheus scraping.
+ */
+const KNOWN_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+
+function normalizeMethod(method: string): string {
+	const upper = method.toUpperCase()
+	return KNOWN_METHODS.has(upper) ? upper : "OTHER"
+}
+
 // Counter: http_requests_total{method,status}
 const requestCounts = new Map<string, number>()
 
@@ -26,13 +40,15 @@ function getHistogram(method: string): HistogramData {
 export function recordRequest(method: string, status: number, durationSec: number): void {
 	if (!config.metricsEnabled) return
 
+	const normalizedMethod = normalizeMethod(method)
+
 	// Increment request counter
-	const counterKey = `${method}:${status}`
+	const counterKey = `${normalizedMethod}:${status}`
 	requestCounts.set(counterKey, (requestCounts.get(counterKey) ?? 0) + 1)
 
 	// Update histogram — store in the first (smallest) matching bucket.
 	// formatMetrics() computes cumulative sums for Prometheus exposition.
-	const h = getHistogram(method)
+	const h = getHistogram(normalizedMethod)
 	h.sum += durationSec
 	h.count += 1
 	for (let i = 0; i < DURATION_BUCKETS.length; i++) {
