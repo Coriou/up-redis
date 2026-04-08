@@ -2,6 +2,7 @@ import type { RedisClient } from "bun"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import { type SSEStreamingApi, streamSSE } from "hono/streaming"
+import { config } from "../config"
 import { log } from "../logger"
 import { createDedicatedConnection } from "../redis"
 import { shuttingDown } from "../shutdown"
@@ -46,6 +47,19 @@ async function handleSubscribe(c: Context) {
 	// already handles this, but check again here in case of any ordering bug.
 	if (shuttingDown()) {
 		return c.json({ error: "Service Unavailable" }, 503)
+	}
+
+	// Cap concurrent SSE subscriptions. Each one holds a dedicated Bun.redis
+	// connection — without a cap, an authenticated attacker (or runaway client)
+	// could exhaust the proxy's file descriptors and starve the rest of the API.
+	if (activeSubscriptions.size >= config.maxSubscriptions) {
+		log.warn("subscription limit reached", {
+			requestId: c.get("requestId"),
+			channel,
+			active: activeSubscriptions.size,
+			limit: config.maxSubscriptions,
+		})
+		return c.json({ error: "Too Many Subscriptions" }, 503)
 	}
 
 	return streamSSE(c, async (stream) => {
@@ -131,6 +145,13 @@ async function handleSubscribe(c: Context) {
 			// intermediaries (proxies, CDNs). Per SSE spec, lines starting with `:`
 			// are comments and are ignored by EventSource clients and the Upstash
 			// SDK reader (which only consumes lines starting with `data: `).
+			//
+			// Send one immediately so a proxy with a sub-15s idle timeout (and
+			// no traffic on this channel) sees activity right away — otherwise
+			// the connection could be torn down before the first interval fires.
+			stream.write(":keep-alive\n\n").catch(() => {
+				disconnected = true
+			})
 			keepaliveTimer = setInterval(() => {
 				if (disconnected) return
 				stream.write(":keep-alive\n\n").catch(() => {

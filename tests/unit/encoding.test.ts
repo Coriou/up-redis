@@ -112,4 +112,33 @@ describe("encodeResult", () => {
 		// where it doesn't run — null is JSON-safe and the SDK handles it.
 		expect(encodeResult({ a: 1 })).toBe(null)
 	})
+
+	// Defensive binary handling — these should normally be converted to strings
+	// by normalizeResp3 first, but we handle them directly so that bypassing
+	// normalization doesn't surface as `null` in the response.
+	test("Uint8Array is base64-encoded directly (defensive)", () => {
+		const buf = new Uint8Array([104, 101, 108, 108, 111]) // "hello"
+		const encoded = encodeResult(buf)
+		expect(typeof encoded).toBe("string")
+		expect(Buffer.from(encoded as string, "base64").toString("utf-8")).toBe("hello")
+	})
+
+	test("Int8Array is base64-encoded directly (defensive)", () => {
+		const buf = new Int8Array([72, 105]) // "Hi"
+		const encoded = encodeResult(buf)
+		expect(Buffer.from(encoded as string, "base64").toString("utf-8")).toBe("Hi")
+	})
+
+	test("ArrayBuffer is base64-encoded directly (defensive)", () => {
+		const buf = new TextEncoder().encode("hello").buffer as ArrayBuffer
+		const encoded = encodeResult(buf)
+		expect(Buffer.from(encoded as string, "base64").toString("utf-8")).toBe("hello")
+	})
+
+	test("Uint8Array subarray preserves byte range (defensive)", () => {
+		const full = new Uint8Array([97, 98, 99, 100, 101]) // "abcde"
+		const view = full.subarray(1, 4) // "bcd"
+		const encoded = encodeResult(view)
+		expect(Buffer.from(encoded as string, "base64").toString("utf-8")).toBe("bcd")
+	})
 })

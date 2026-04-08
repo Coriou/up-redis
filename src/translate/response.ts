@@ -17,8 +17,20 @@ export function normalizeResp3(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(normalizeResp3)
 
 	if (typeof value === "object") {
-		// Binary data (Buffer/Uint8Array) → UTF-8 string
-		if (value instanceof Uint8Array) return Buffer.from(value).toString("utf-8")
+		// Binary data → UTF-8 string. Bun.redis may surface bytes as Buffer,
+		// Uint8Array, or another typed-array view; ArrayBuffer.isView catches them all.
+		if (ArrayBuffer.isView(value)) {
+			// DataView has no .buffer-as-bytes contract that matches what Buffer.from
+			// expects; fall through to the generic object branch instead.
+			if (!(value instanceof DataView)) {
+				return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("utf-8")
+			}
+		}
+
+		// Raw ArrayBuffer (rare, but possible if a caller hands one in directly)
+		if (value instanceof ArrayBuffer) {
+			return Buffer.from(value).toString("utf-8")
+		}
 
 		// JavaScript Map → flat alternating array (safety net)
 		if (value instanceof Map) {

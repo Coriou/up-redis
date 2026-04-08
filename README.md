@@ -181,8 +181,11 @@ All environment variables are prefixed `UPREDIS_`:
 | `UPREDIS_HOST` | `0.0.0.0` | HTTP listen host |
 | `UPREDIS_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `UPREDIS_LOG_FORMAT` | `json` | Log format: `json` (structured) or `text` (human-readable) |
-| `UPREDIS_SHUTDOWN_TIMEOUT` | `30000` | Max milliseconds to wait for request drain on shutdown |
+| `UPREDIS_SHUTDOWN_TIMEOUT` | `30000` | Max milliseconds to wait for request drain on shutdown (min 1000) |
 | `UPREDIS_REQUEST_TIMEOUT` | `30000` | Per-request timeout in milliseconds (`0` = disabled) |
+| `UPREDIS_MAX_BODY_SIZE` | `10485760` | Max request body size in bytes (10MB) |
+| `UPREDIS_MAX_PIPELINE_COMMANDS` | `1000` | Max commands per `/pipeline` or `/multi-exec` request |
+| `UPREDIS_MAX_SUBSCRIPTIONS` | `10000` | Max concurrent SSE `/subscribe/:channel` connections (each holds a dedicated Redis connection) |
 | `UPREDIS_METRICS` | `false` | Enable Prometheus metrics at `GET /metrics` |
 
 ## Health & Monitoring

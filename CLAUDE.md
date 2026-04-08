@@ -200,10 +200,12 @@ All prefixed `UPREDIS_`:
 | `UPREDIS_HOST`             | `0.0.0.0`                | No       | HTTP listen host                               |
 | `UPREDIS_LOG_LEVEL`        | `info`                   | No       | `debug`, `info`, `warn`, `error`               |
 | `UPREDIS_LOG_FORMAT`       | `json`                   | No       | `json` (structured) or `text` (human-readable) |
-| `UPREDIS_SHUTDOWN_TIMEOUT` | `30000`                  | No       | Max ms to wait for request drain               |
+| `UPREDIS_SHUTDOWN_TIMEOUT` | `30000`                  | No       | Max ms to wait for request drain (min 1000)    |
 | `UPREDIS_REQUEST_TIMEOUT`  | `30000`                  | No       | Per-request timeout in ms (`0` = disabled)     |
 | `UPREDIS_METRICS`          | `false`                  | No       | Enable Prometheus `/metrics` endpoint          |
 | `UPREDIS_MAX_BODY_SIZE`    | `10485760`               | No       | Max request body size in bytes (10MB)          |
+| `UPREDIS_MAX_PIPELINE_COMMANDS` | `1000`              | No       | Max commands per `/pipeline` or `/multi-exec` request |
+| `UPREDIS_MAX_SUBSCRIPTIONS` | `10000`                 | No       | Max concurrent SSE `/subscribe/:channel` connections  |
 
 ## Bun.redis Gotchas
 

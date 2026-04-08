@@ -9,12 +9,28 @@ const DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 1
  * and create unlimited counter/histogram entries — a memory exhaustion vector
  * on a `/metrics` endpoint that is intentionally unauthenticated for
  * Prometheus scraping.
+ *
+ * Exported for unit testing only.
  */
 const KNOWN_METHODS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 
-function normalizeMethod(method: string): string {
+export function normalizeMethod(method: string): string {
 	const upper = method.toUpperCase()
 	return KNOWN_METHODS.has(upper) ? upper : "OTHER"
+}
+
+/**
+ * Bound the cardinality of the `status` label as a defense-in-depth measure.
+ * In practice, status codes come from Hono and are well-formed integers, but
+ * a future middleware bug could surface anything (NaN, weird ints, fractional)
+ * and turn the unauthenticated `/metrics` endpoint into an unbounded-write
+ * memory hole. Anything outside the standard 1xx–5xx ranges collapses to "0".
+ *
+ * Exported for unit testing only.
+ */
+export function normalizeStatus(status: number): string {
+	if (!Number.isInteger(status) || status < 100 || status > 599) return "0"
+	return String(status)
 }
 
 // Counter: http_requests_total{method,status}
@@ -41,9 +57,10 @@ export function recordRequest(method: string, status: number, durationSec: numbe
 	if (!config.metricsEnabled) return
 
 	const normalizedMethod = normalizeMethod(method)
+	const normalizedStatus = normalizeStatus(status)
 
 	// Increment request counter
-	const counterKey = `${normalizedMethod}:${status}`
+	const counterKey = `${normalizedMethod}:${normalizedStatus}`
 	requestCounts.set(counterKey, (requestCounts.get(counterKey) ?? 0) + 1)
 
 	// Update histogram — store in the first (smallest) matching bucket.

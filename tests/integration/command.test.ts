@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { api, cmd, cmdBase64, testKey } from "./setup"
 
+const BASE_URL = process.env.UPREDIS_TEST_URL ?? "http://localhost:8080"
+
 const keys: string[] = []
 function k(prefix = "cmd") {
 	const key = testKey(prefix)
@@ -98,7 +100,7 @@ describe("POST / (single command)", () => {
 
 	// Auth
 	test("missing auth returns 401", async () => {
-		const res = await fetch("http://localhost:8080/", {
+		const res = await fetch(`${BASE_URL}/`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(["PING"]),
@@ -107,7 +109,7 @@ describe("POST / (single command)", () => {
 	})
 
 	test("wrong auth returns 401", async () => {
-		const res = await fetch("http://localhost:8080/", {
+		const res = await fetch(`${BASE_URL}/`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",

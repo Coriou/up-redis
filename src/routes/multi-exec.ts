@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { checkBlockedCommand } from "../commands"
+import { config } from "../config"
 import { log } from "../logger"
 import { createDedicatedConnection } from "../redis"
 import { encodeResult } from "../translate/encoding"
@@ -22,6 +23,18 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 	// Short-circuit: empty transaction needs no Redis connection
 	if (body.length === 0) {
 		return c.json([])
+	}
+
+	// Same cap as /pipeline. A million-command transaction would hold the
+	// dedicated connection for an unbounded time and burn memory queueing
+	// commands on the Redis side.
+	if (body.length > config.maxPipelineCommands) {
+		return c.json(
+			{
+				error: `Transaction exceeds maximum of ${config.maxPipelineCommands} commands (got ${body.length})`,
+			},
+			400,
+		)
 	}
 
 	// Validate all commands and pre-stringify before opening a dedicated connection.

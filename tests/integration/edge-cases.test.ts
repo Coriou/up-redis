@@ -1,6 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { api, cmd, cmdBase64, testKey } from "./setup"
 
+const BASE_URL = process.env.UPREDIS_TEST_URL ?? "http://localhost:8080"
+const TOKEN = process.env.UPREDIS_TOKEN ?? "test-token-123"
+
 const keys: string[] = []
 function k(prefix = "edge") {
 	const key = testKey(prefix)
@@ -224,10 +227,10 @@ describe("Edge cases: SET with options via raw commands", () => {
 
 describe("Edge cases: request body validation", () => {
 	test("string body (not JSON) returns 400", async () => {
-		const res = await fetch("http://localhost:8080/", {
+		const res = await fetch(`${BASE_URL}/`, {
 			method: "POST",
 			headers: {
-				Authorization: "Bearer test-token-123",
+				Authorization: `Bearer ${TOKEN}`,
 				"Content-Type": "application/json",
 			},
 			body: "not json",
@@ -288,5 +291,34 @@ describe("Edge cases: large payloads", () => {
 		for (const r of results) {
 			expect(r.result).toBe("OK")
 		}
+	})
+})
+
+describe("Edge cases: pipeline / multi-exec size limits", () => {
+	test("pipeline exceeding max commands returns 400", async () => {
+		// Default limit is 1000. Send 1001 lightweight commands.
+		const commands = Array.from({ length: 1001 }, () => ["PING"])
+		const { status, data } = await api("POST", "/pipeline", commands)
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("maximum")
+		expect((data as { error: string }).error).toContain("1000")
+	})
+
+	test("pipeline at exactly max commands succeeds", async () => {
+		const commands = Array.from({ length: 1000 }, () => ["PING"])
+		const { status, data } = await api("POST", "/pipeline", commands)
+		expect(status).toBe(200)
+		const results = data as Array<{ result?: unknown }>
+		expect(results).toHaveLength(1000)
+		expect(results[0].result).toBe("PONG")
+		expect(results[999].result).toBe("PONG")
+	})
+
+	test("multi-exec exceeding max commands returns 400", async () => {
+		const commands = Array.from({ length: 1001 }, () => ["PING"])
+		const { status, data } = await api("POST", "/multi-exec", commands)
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("maximum")
+		expect((data as { error: string }).error).toContain("1000")
 	})
 })

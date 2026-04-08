@@ -25,6 +25,21 @@ export function encodeResult(value: unknown): unknown {
 		// in the SDK rather than an unparseable number.
 		return Buffer.from(value.toString(), "utf-8").toString("base64")
 	}
+	// Defensive: binary data that escaped normalizeResp3. Convert to UTF-8 then
+	// base64 so the SDK still receives a decodable string.
+	if (typeof value === "object" && value !== null) {
+		if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+			const buf = Buffer.from(
+				(value as ArrayBufferView).buffer,
+				(value as ArrayBufferView).byteOffset,
+				(value as ArrayBufferView).byteLength,
+			)
+			return buf.toString("base64")
+		}
+		if (value instanceof ArrayBuffer) {
+			return Buffer.from(value).toString("base64")
+		}
+	}
 	// Plain objects (RESP3 Maps that escaped normalization): drop to null rather
 	// than crash JSON.stringify or send the SDK something it can't decode.
 	return null

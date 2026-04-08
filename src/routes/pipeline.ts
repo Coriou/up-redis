@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { checkBlockedCommand } from "../commands"
+import { config } from "../config"
 import { getClient } from "../redis"
 import { encodeResult } from "../translate/encoding"
 import { normalizeResp3 } from "../translate/response"
@@ -21,6 +22,18 @@ pipelineRoutes.post("/pipeline", async (c) => {
 	// Short-circuit: empty pipeline needs no Redis call
 	if (body.length === 0) {
 		return c.json([])
+	}
+
+	// Cap the number of commands per request. Even with the body size limit,
+	// a tiny-command body could queue an enormous number of operations on the
+	// shared connection.
+	if (body.length > config.maxPipelineCommands) {
+		return c.json(
+			{
+				error: `Pipeline exceeds maximum of ${config.maxPipelineCommands} commands (got ${body.length})`,
+			},
+			400,
+		)
 	}
 
 	const useBase64 = c.req.header("upstash-encoding")?.toLowerCase() === "base64"

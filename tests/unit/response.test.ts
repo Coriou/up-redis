@@ -197,4 +197,29 @@ describe("normalizeResp3", () => {
 		])
 		expect(normalizeResp3(map)).toEqual(["1", "one", "2", "two"])
 	})
+
+	// Other typed arrays — defense in depth (Bun.redis only emits Uint8Array
+	// in practice, but the proxy must not silently corrupt other binary views)
+	test("Int8Array becomes UTF-8 string", () => {
+		const arr = new Int8Array([104, 105]) // "hi"
+		expect(normalizeResp3(arr)).toBe("hi")
+	})
+
+	test("Uint8ClampedArray becomes UTF-8 string", () => {
+		const arr = new Uint8ClampedArray([72, 101, 108, 108, 111]) // "Hello"
+		expect(normalizeResp3(arr)).toBe("Hello")
+	})
+
+	test("ArrayBuffer becomes UTF-8 string", () => {
+		const buf = new TextEncoder().encode("hi").buffer as ArrayBuffer
+		expect(normalizeResp3(buf)).toBe("hi")
+	})
+
+	test("Uint8Array sliced view preserves byte range", () => {
+		// Subarray creates a view with non-zero byteOffset over the same buffer.
+		// Naive Buffer.from(view) without offset/length would read the whole buffer.
+		const full = new Uint8Array([97, 98, 99, 100, 101]) // "abcde"
+		const view = full.subarray(1, 4) // "bcd"
+		expect(normalizeResp3(view)).toBe("bcd")
+	})
 })
