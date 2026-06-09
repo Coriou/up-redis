@@ -15,24 +15,32 @@ const expectedHash = createHash("sha256").update(config.token).digest()
  */
 export const authMiddleware: MiddlewareHandler = async (c, next) => {
 	const raw = c.req.header("authorization")
-	if (!raw) {
+	const queryToken = c.req.query("_token")
+	if (!raw && !queryToken) {
 		throw new HTTPException(401, { message: "Unauthorized" })
 	}
 
-	// RFC 9110 §5.5 allows OWS around header field values; parsers usually
-	// strip it but we trim defensively. RFC 7235 §2.1: scheme is case-insensitive.
-	// Use indexOf for the first space rather than slice(7) so an extra space
-	// after "Bearer " doesn't bleed into the token.
-	const authorization = raw.trim()
-	const spaceIdx = authorization.indexOf(" ")
-	if (spaceIdx === -1) {
-		throw new HTTPException(401, { message: "Unauthorized" })
+	let token = queryToken?.trim()
+
+	if (raw) {
+		// RFC 9110 §5.5 allows OWS around header field values; parsers usually
+		// strip it but we trim defensively. RFC 7235 §2.1: scheme is case-insensitive.
+		// Use indexOf for the first space rather than slice(7) so an extra space
+		// after "Bearer " doesn't bleed into the token.
+		const authorization = raw.trim()
+		const spaceIdx = authorization.indexOf(" ")
+		if (spaceIdx === -1) {
+			throw new HTTPException(401, { message: "Unauthorized" })
+		}
+		const scheme = authorization.slice(0, spaceIdx).toLowerCase()
+		if (scheme !== "bearer") {
+			throw new HTTPException(401, { message: "Unauthorized" })
+		}
+		token = authorization.slice(spaceIdx + 1).trim()
+		if (!token) {
+			throw new HTTPException(401, { message: "Unauthorized" })
+		}
 	}
-	const scheme = authorization.slice(0, spaceIdx).toLowerCase()
-	if (scheme !== "bearer") {
-		throw new HTTPException(401, { message: "Unauthorized" })
-	}
-	const token = authorization.slice(spaceIdx + 1).trim()
 	if (!token) {
 		throw new HTTPException(401, { message: "Unauthorized" })
 	}

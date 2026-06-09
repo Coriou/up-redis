@@ -9,6 +9,9 @@ dist/
 # Coverage
 coverage/
 
+# Redis local data
+dump.rdb
+
 # IDE
 .vscode/
 .idea/
@@ -19,6 +22,3 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
-
-# Bun
-bun.lock

@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { api, cmd, cmdBase64, testKey } from "./setup"
+import { AUTH, api, cmd, cmdBase64, testKey } from "./setup"
 
 const BASE_URL = process.env.UPREDIS_TEST_URL ?? "http://localhost:8080"
+const TOKEN = process.env.UPREDIS_TOKEN ?? "test-token-123"
 
 const keys: string[] = []
 function k(prefix = "cmd") {
@@ -120,6 +121,29 @@ describe("POST / (single command)", () => {
 		expect(res.status).toBe(401)
 	})
 
+	test("_token query auth is accepted", async () => {
+		const res = await fetch(`${BASE_URL}/?_token=${encodeURIComponent(TOKEN)}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(["PING"]),
+		})
+		expect(res.status).toBe(200)
+		const data = await res.json()
+		expect(data).toEqual({ result: "PONG" })
+	})
+
+	test("invalid Authorization header is not bypassed by valid _token query auth", async () => {
+		const res = await fetch(`${BASE_URL}/?_token=${encodeURIComponent(TOKEN)}`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: "Bearer wrong-token",
+			},
+			body: JSON.stringify(["PING"]),
+		})
+		expect(res.status).toBe(401)
+	})
+
 	// Base64 encoding
 	test("with base64 header: string values are base64-encoded", async () => {
 		const key = k()
@@ -155,6 +179,61 @@ describe("POST / (single command)", () => {
 		const ttl = await cmd("TTL", key)
 		expect(typeof ttl).toBe("number")
 		expect(ttl as number).toBeGreaterThan(0)
+	})
+})
+
+describe("Path-style REST commands", () => {
+	test("GET /set/:key/:value and GET /get/:key execute commands", async () => {
+		const key = k("path")
+		const set = await fetch(
+			`${BASE_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent("hello world")}`,
+			{ headers: AUTH },
+		)
+		expect(set.status).toBe(200)
+		expect(await set.json()).toEqual({ result: "OK" })
+
+		const get = await fetch(`${BASE_URL}/get/${encodeURIComponent(key)}`, { headers: AUTH })
+		expect(get.status).toBe(200)
+		expect(await get.json()).toEqual({ result: "hello world" })
+	})
+
+	test("path command supports _token query auth without forwarding _token to Redis", async () => {
+		const key = k("path-token")
+		const res = await fetch(
+			`${BASE_URL}/set/${encodeURIComponent(key)}/value?_token=${encodeURIComponent(TOKEN)}&EX=60`,
+		)
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ result: "OK" })
+
+		const ttl = await cmd("TTL", key)
+		expect(ttl as number).toBeGreaterThan(0)
+	})
+
+	test("POST path command appends raw body before query arguments", async () => {
+		const key = k("path-post")
+		const res = await fetch(`${BASE_URL}/set/${encodeURIComponent(key)}?EX=60`, {
+			method: "POST",
+			headers: { ...AUTH, "Content-Type": "text/plain" },
+			body: "posted value",
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ result: "OK" })
+
+		expect(await cmd("GET", key)).toBe("posted value")
+		const ttl = await cmd("TTL", key)
+		expect(ttl as number).toBeGreaterThan(0)
+	})
+
+	test("path command honors base64 response encoding", async () => {
+		const key = k("path-b64")
+		await cmd("SET", key, "encoded")
+
+		const res = await fetch(`${BASE_URL}/get/${encodeURIComponent(key)}`, {
+			headers: { ...AUTH, "Upstash-Encoding": "base64" },
+		})
+		expect(res.status).toBe(200)
+		const data = (await res.json()) as { result: unknown }
+		expect(data.result).toBe(Buffer.from("encoded").toString("base64"))
 	})
 })
 
@@ -211,6 +290,28 @@ describe("POST / (blocked commands)", () => {
 		const { status, data } = await api("POST", "/", ["WAIT", "0", "0"])
 		expect(status).toBe(400)
 		expect((data as { error: string }).error).toContain("WAIT")
+	})
+
+	test("XREAD BLOCK is blocked", async () => {
+		const { status, data } = await api("POST", "/", ["XREAD", "BLOCK", "0", "STREAMS", "s", "$"])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("XREAD BLOCK")
+	})
+
+	test("XREADGROUP BLOCK is blocked", async () => {
+		const { status, data } = await api("POST", "/", [
+			"XREADGROUP",
+			"GROUP",
+			"g",
+			"c",
+			"BLOCK",
+			"0",
+			"STREAMS",
+			"s",
+			">",
+		])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("XREADGROUP BLOCK")
 	})
 
 	test("SHUTDOWN is blocked (would kill the Redis server)", async () => {

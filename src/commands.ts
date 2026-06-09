@@ -17,6 +17,7 @@
  *    - List/zset blocking pops: BLPOP, BRPOP, BRPOPLPUSH, BLMOVE, BLMPOP,
  *      BZPOPMIN, BZPOPMAX, BZMPOP
  *    - Replication wait: WAIT, WAITAOF
+ *    - Blocking stream reads: XREAD BLOCK, XREADGROUP BLOCK
  *
  * 3. **Server/admin commands** — destructive at the cluster/server level
  *    or capable of killing the proxy's own connection:
@@ -149,15 +150,24 @@ const BLOCKING_CMDS = new Set([
 const ADMIN_CMDS = new Set(["SHUTDOWN", "REPLICAOF", "SLAVEOF", "FAILOVER", "DEBUG", "MONITOR"])
 
 /**
- * Check if a command (with its first argument, for subcommand-style commands)
+ * Check if a command (with its arguments, for subcommand-style commands)
  * is blocked on the shared connection.
  *
  * Returns an error message if blocked, or null if allowed. The first argument
  * is inspected for `CLIENT KILL`, `CLUSTER FAILOVER`, etc. — these are blocked
  * even though the parent command (CLIENT GETNAME, CLUSTER INFO) is allowed.
  */
-export function checkBlockedCommand(command: string, firstArg?: string): string | null {
+export function checkBlockedCommand(
+	command: string,
+	argsOrFirstArg?: readonly string[] | string,
+): string | null {
 	const upper = command.toUpperCase()
+	const args = Array.isArray(argsOrFirstArg)
+		? argsOrFirstArg
+		: argsOrFirstArg === undefined
+			? []
+			: [argsOrFirstArg]
+	const firstArg = args[0]
 
 	if (BLOCKED_COMMANDS.has(upper)) {
 		if (TRANSACTION_CMDS.has(upper)) {
@@ -192,6 +202,16 @@ export function checkBlockedCommand(command: string, firstArg?: string): string 
 		if (BLOCKED_CLUSTER_SUBCOMMANDS.has(sub)) {
 			return `CLUSTER ${sub} is not allowed — ${ADMIN_REASON}`
 		}
+	}
+
+	// Upstash REST does not support blocking stream reads. They would also hold
+	// the shared proxy connection open until a stream receives data or the
+	// client timeout fires.
+	if (
+		(upper === "XREAD" || upper === "XREADGROUP") &&
+		args.some((arg) => arg.toUpperCase() === "BLOCK")
+	) {
+		return `${upper} BLOCK is not allowed — ${BLOCKING_REASON}`
 	}
 
 	return null

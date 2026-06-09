@@ -83,8 +83,8 @@ describe("POST /pipeline", () => {
 			{ "Upstash-Encoding": "base64" },
 		)
 		const results = data as Array<{ result?: unknown }>
-		// SET → base64("OK")
-		expect(results[0].result).toBe(Buffer.from("OK").toString("base64"))
+		// SET → literal "OK" per Upstash REST docs
+		expect(results[0].result).toBe("OK")
 		// GET → base64("hello")
 		expect(results[1].result).toBe(Buffer.from("hello").toString("base64"))
 		// INCR → number (not encoded)

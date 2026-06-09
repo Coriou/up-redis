@@ -54,4 +54,22 @@ describe("SDK: pipeline", () => {
 		// SDK's GET deserializer JSON.parses the value, so "3" becomes 3
 		expect(results).toEqual(["OK", 1, 2, 3, 3])
 	})
+
+	test("auto-pipeline mixed read/write batches remain compatible with SDK 1.38 split behavior", async () => {
+		const autoRedis = redis as typeof redis & { pipelineCounter: number }
+		const key = k("autopipe")
+		await redis.set(key, "before")
+
+		const beforeCount = autoRedis.pipelineCounter
+		const [setResult, readResult] = await Promise.all([
+			redis.set(key, "after"),
+			redis.get<string>(key),
+		])
+		const afterCount = autoRedis.pipelineCounter
+
+		expect(setResult).toBe("OK")
+		expect(readResult === "before" || readResult === "after").toBe(true)
+		expect(afterCount - beforeCount).toBeGreaterThanOrEqual(2)
+		expect(await redis.get<string>(key)).toBe("after")
+	})
 })

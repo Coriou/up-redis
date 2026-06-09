@@ -61,11 +61,12 @@ const timeoutGate: MiddlewareHandler = async (c, next) => {
 }
 app.use("/*", timeoutGate)
 
-// Business routes
-app.route("/", commandRoutes)
+// Business routes. Register special endpoints before path-style command routes:
+// commandRoutes includes a catch-all for /COMMAND/arg1/arg2...
 app.route("/", pipelineRoutes)
 app.route("/", multiExecRoutes)
 app.route("/", pubsubRoutes)
+app.route("/", commandRoutes)
 
 // 404 handler
 app.notFound((c) => {

@@ -48,7 +48,7 @@ pipelineRoutes.post("/pipeline", async (c) => {
 		}
 		const command = String(cmd[0])
 		const args = cmd.slice(1).map(String)
-		const blocked = checkBlockedCommand(command, args[0])
+		const blocked = checkBlockedCommand(command, args)
 		if (blocked) {
 			return Promise.reject(new Error(blocked))
 		}

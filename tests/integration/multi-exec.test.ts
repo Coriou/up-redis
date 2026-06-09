@@ -52,7 +52,7 @@ describe("POST /multi-exec", () => {
 			{ "Upstash-Encoding": "base64" },
 		)
 		const results = data as Array<{ result?: unknown }>
-		expect(results[0].result).toBe(Buffer.from("OK").toString("base64"))
+		expect(results[0].result).toBe("OK")
 		expect(results[1].result).toBe(Buffer.from("world").toString("base64"))
 	})
 

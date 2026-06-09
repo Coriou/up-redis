@@ -4,7 +4,7 @@ import { Hono } from "hono"
 import { type SSEStreamingApi, streamSSE } from "hono/streaming"
 import { config } from "../config"
 import { log } from "../logger"
-import { createDedicatedConnection } from "../redis"
+import { createDedicatedConnection, getClient } from "../redis"
 import { shuttingDown } from "../shutdown"
 import { formatMessageEvent, formatSubscribeEvent } from "../translate/pubsub"
 
@@ -179,9 +179,27 @@ async function handleSubscribe(c: Context) {
 	})
 }
 
+async function handlePublish(c: Context) {
+	const channel = c.req.param("channel") as string
+	const message = c.req.param("message") as string
+
+	if (!channel || channel.length > MAX_CHANNEL_NAME_LENGTH || hasControlCharacters(channel)) {
+		return c.json({ error: "Invalid channel name" }, 400)
+	}
+
+	try {
+		const result = await getClient().publish(channel, message)
+		return c.json({ result })
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		return c.json({ error: message }, 400)
+	}
+}
+
 // SDK uses POST, custom clients (like resumable-stream adapter) use GET
 pubsubRoutes.post("/subscribe/:channel", handleSubscribe)
 pubsubRoutes.get("/subscribe/:channel", handleSubscribe)
+pubsubRoutes.post("/publish/:channel/:message", handlePublish)
 
 /** Close all active subscriptions (called during graceful shutdown) */
 export async function closeAllSubscriptions(): Promise<void> {

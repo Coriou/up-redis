@@ -125,6 +125,16 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("WAITAOF")).not.toBe(null)
 	})
 
+	test("XREAD BLOCK is blocked", () => {
+		expect(checkBlockedCommand("XREAD", ["BLOCK", "0", "STREAMS", "s", "$"])).not.toBe(null)
+	})
+
+	test("XREADGROUP BLOCK is blocked", () => {
+		expect(
+			checkBlockedCommand("XREADGROUP", ["GROUP", "g", "c", "BLOCK", "0", "STREAMS", "s", ">"]),
+		).not.toBe(null)
+	})
+
 	// Server admin commands
 	test("SHUTDOWN is blocked", () => {
 		const msg = checkBlockedCommand("SHUTDOWN")
@@ -312,6 +322,10 @@ describe("checkBlockedCommand", () => {
 
 	test("ZPOPMIN (non-blocking) is allowed", () => {
 		expect(checkBlockedCommand("ZPOPMIN")).toBe(null)
+	})
+
+	test("non-blocking XREAD is allowed", () => {
+		expect(checkBlockedCommand("XREAD", ["STREAMS", "s", "$"])).toBe(null)
 	})
 
 	// SUBSCRIBE hint

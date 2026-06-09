@@ -50,7 +50,7 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 		const args = cmd.slice(1).map(String)
 		// MULTI/EXEC/DISCARD/WATCH/UNWATCH are nested transaction state — disallow.
 		// Blocking and admin commands disallowed for the same reasons as POST /.
-		const blocked = checkBlockedCommand(command, args[0])
+		const blocked = checkBlockedCommand(command, args)
 		if (blocked) {
 			return c.json({ error: blocked }, 400)
 		}

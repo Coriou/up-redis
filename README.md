@@ -77,6 +77,11 @@ curl -X POST http://localhost:8080/ \
   -d '["SET", "mykey", "myvalue"]'
 # → {"result":"OK"}
 
+# Path-style command
+curl http://localhost:8080/set/mykey/myvalue \
+  -H "Authorization: Bearer your-token"
+# → {"result":"OK"}
+
 # Pipeline (batch)
 curl -X POST http://localhost:8080/pipeline \
   -H "Authorization: Bearer your-token" \
@@ -98,6 +103,11 @@ curl -N http://localhost:8080/subscribe/my-channel \
 # → data: message,my-channel,hello    (when someone publishes)
 
 # Publish to channel (from another terminal)
+curl -X POST http://localhost:8080/publish/my-channel/hello \
+  -H "Authorization: Bearer your-token"
+# → {"result":1}
+
+# Or publish with a raw Redis command
 curl -X POST http://localhost:8080/ \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
@@ -107,24 +117,28 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 369 tests including 93 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 412 tests including 94 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
 | `POST /` | Supported — single command |
+| `GET\|POST\|PUT /:command/:arg...` | Supported — path-style REST commands |
 | `POST /pipeline` | Supported — batch execution |
 | `POST /multi-exec` | Supported — atomic transactions |
 | `GET\|POST /subscribe/:channel` | Supported — PubSub over SSE |
+| `POST /publish/:channel/:message` | Supported — PubSub publish shortcut |
 | `GET /` | Supported — health check (welcome message) |
 | `GET /health` | Supported — rich health with Redis probe (readiness) |
 | `GET /livez` | Supported — liveness probe (does NOT check Redis) |
 | `GET /readyz` | Supported — Kubernetes-style readiness alias for /health |
 | `GET /metrics` | Supported — Prometheus (opt-in) |
 
+Authentication accepts `Authorization: Bearer <token>` and Upstash's `_token=<token>` query parameter. If both are present, the Authorization header takes precedence.
+
 All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work, with these exceptions blocked at the proxy layer to protect the shared connection:
 
 - **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `SELECT`, `QUIT`, `RESET`
-- **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF` — these would hold the shared connection and starve every other request
+- **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
 - **Server admin / DoS vectors:** `SHUTDOWN`, `REPLICAOF`/`SLAVEOF`, `FAILOVER`, `DEBUG`, `MONITOR`, `CLIENT KILL`/`PAUSE`/`UNPAUSE`/`REPLY`/`NO-EVICT`/`NO-TOUCH`/`SETNAME`/`SETINFO`/`TRACKING`, `CLUSTER FAILOVER`/`RESET`/`MEET`/`FORGET`/`REPLICATE`/`ADDSLOTS`/`DELSLOTS`/`SETSLOT`
 
 Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST` remain available, as do read-only `CLUSTER` subcommands like `CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER MYID`, `CLUSTER SLOTS`, `CLUSTER SHARDS`.
@@ -142,7 +156,7 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
 | Docker image | ~100MB | ~50MB (Bun Alpine) |
-| Tests | External | 369 built-in (unit + integration + SDK compat) |
+| Tests | External | 412 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
@@ -153,6 +167,8 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | ZRANGE LIMIT | Works without BYSCORE/BYLEX | Redis requires BYSCORE/BYLEX |
 | RedisJSON | Custom response format | Standard Redis Stack format |
 | PSUBSCRIBE (pattern) | `POST /psubscribe/{pattern}` | Not yet supported (SUBSCRIBE works) |
+| MONITOR SSE | `POST /monitor` | Not yet supported; use `redis-cli monitor` directly |
+| RESP2 response format | `Upstash-Response-Format: resp2` | Not yet supported; JSON responses are supported |
 | Rate limiting | Built-in | Use reverse proxy (nginx, Caddy) |
 | Multi-region | Built-in | Single-region by design |
 
@@ -233,9 +249,9 @@ Exposes `http_requests_total{method,status}`, `http_request_duration_seconds` hi
 - **Runtime:** [Bun](https://bun.sh) — native TypeScript, fastest JS runtime
 - **HTTP:** [Hono](https://hono.dev) v4 — lightweight, fast
 - **Redis:** Bun.redis (native, zero-dep) — RESP3, auto-pipelining
-- **Validation:** [Zod](https://zod.dev) v3 — config validation
+- **Validation:** [Zod](https://zod.dev) v4 — config validation
 
-Key design decisions: single shared connection with auto-pipelining for commands/pipelines, dedicated connection per MULTI/EXEC transaction (prevents interleaving), dedicated connection per PubSub subscription (SSE streaming), RESP3-to-RESP2 translation layer (Maps→flat arrays, Booleans→0/1), recursive base64 encoding.
+Key design decisions: single shared connection with auto-pipelining for commands/pipelines, dedicated connection per MULTI/EXEC transaction (prevents interleaving), dedicated connection per PubSub subscription (SSE streaming), RESP3-to-RESP2 translation layer (Maps→flat arrays, Booleans→0/1), recursive base64 encoding with literal `OK` preserved per Upstash REST docs.
 
 See [PLAN.md](./PLAN.md) for full architecture details.
 
@@ -252,13 +268,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-369 tests across three tiers:
+412 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 141 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
-| **Integration** | 135 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
-| **SDK Compatibility** | 93 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class) |
+| **Unit** | 171 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
+| **Integration** | 147 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
+| **SDK Compatibility** | 94 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
 bun test                       # All tests

@@ -1,8 +1,9 @@
 /**
- * Recursively base64-encode all string values in a response.
+ * Recursively base64-encode string values in a response.
  *
  * Called when the SDK sends `Upstash-Encoding: base64` header (the default).
- * ALL strings are encoded including "OK" and "QUEUED" — the SDK handles both.
+ * Upstash's REST API leaves the literal "OK" unencoded; the SDK special-cases
+ * it, and raw REST clients may rely on the documented shape.
  *
  * Uses Buffer.from() instead of btoa() because btoa chokes on non-Latin-1 chars.
  *
@@ -15,6 +16,7 @@
 export function encodeResult(value: unknown): unknown {
 	if (value === null || value === undefined) return null
 	if (typeof value === "number") return value
+	if (value === "OK") return "OK"
 	if (typeof value === "string") return Buffer.from(value, "utf-8").toString("base64")
 	if (Array.isArray(value)) return value.map(encodeResult)
 	// Defensive: normalizeResp3 should have converted these already, but if it

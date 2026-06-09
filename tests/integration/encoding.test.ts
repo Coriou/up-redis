@@ -62,7 +62,7 @@ describe("Base64 encoding roundtrip", () => {
 			{ "Upstash-Encoding": "BASE64" },
 		)
 		const results = data as Array<{ result?: unknown }>
-		expect(results[0].result).toBe(Buffer.from("OK").toString("base64"))
+		expect(results[0].result).toBe("OK")
 		expect(results[1].result).toBe(Buffer.from("tx").toString("base64"))
 	})
 

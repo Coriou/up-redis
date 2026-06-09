@@ -29,13 +29,13 @@ describe("Health endpoints", () => {
 		expect(res.status).toBe(200)
 	})
 
-	test("404 for unknown paths (with auth)", async () => {
+	test("unknown path-style command returns 400 command error", async () => {
 		const res = await fetch(`${BASE_URL}/nonexistent`, {
 			headers: { Authorization: `Bearer ${TOKEN}` },
 		})
-		expect(res.status).toBe(404)
+		expect(res.status).toBe(400)
 		const data = await res.json()
-		expect((data as { error: string }).error).toBe("Not Found")
+		expect((data as { error: string }).error).toBeDefined()
 	})
 
 	test("error envelope contains only `error` (no status field)", async () => {
@@ -226,6 +226,7 @@ describe("Security headers", () => {
 
 	test("security headers on 404 responses", async () => {
 		const res = await fetch(`${BASE_URL}/does-not-exist`, {
+			method: "DELETE",
 			headers: { Authorization: `Bearer ${TOKEN}` },
 		})
 		expect(res.status).toBe(404)

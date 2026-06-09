@@ -7,8 +7,8 @@ describe("encodeResult", () => {
 		expect(encodeResult("hello")).toBe("aGVsbG8=")
 	})
 
-	test('"OK" is base64-encoded (SRH approach, SDK handles both)', () => {
-		expect(encodeResult("OK")).toBe("T0s=")
+	test('"OK" stays literal to match Upstash REST docs', () => {
+		expect(encodeResult("OK")).toBe("OK")
 	})
 
 	test('"QUEUED" is base64-encoded', () => {

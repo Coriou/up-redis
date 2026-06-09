@@ -109,6 +109,25 @@ describe("GET/POST /subscribe/:channel", () => {
 		sub.controller.abort()
 	})
 
+	test("POST /publish/:channel/:message publishes to subscribers", async () => {
+		const channel = ch()
+		const sub = tracked(sseSubscribe(channel))
+
+		await sub.waitForEvents(1)
+
+		const res = await fetch(`${BASE_URL}/publish/${encodeURIComponent(channel)}/from-path`, {
+			method: "POST",
+			headers: AUTH,
+		})
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ result: 1 })
+
+		await sub.waitForEvents(2)
+		expect(sub.events[1]).toBe(`message,${channel},from-path`)
+
+		sub.controller.abort()
+	})
+
 	test("receives multiple messages in order", async () => {
 		const channel = ch()
 		const sub = tracked(sseSubscribe(channel))

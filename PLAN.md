@@ -71,8 +71,8 @@ SRH has ~500 lines of core logic. up-redis will have similar core complexity (~4
 | Runtime | Bun | 1.2+ | Native TS, built-in test runner, native Redis client |
 | HTTP | Hono | v4 | Lightweight, fast, great middleware |
 | Redis client | Bun.redis | built-in | RESP3, auto-pipelining, `send()` for raw commands, zero deps |
-| Validation | Zod | v3 | Request validation, config validation |
-| Linting/Format | Biome | v1 | Fast, modern, replaces ESLint+Prettier |
+| Validation | Zod | v4 | Request validation, config validation |
+| Linting/Format | Biome | v2 | Fast, modern, replaces ESLint+Prettier |
 | Testing | Bun test | built-in | Fast, Jest-compatible API |
 | Container | Bun Alpine | oven/bun:alpine | Minimal image size (~50MB) |
 | Redis backend | Any Redis 6+ | 6.0+ | Standard Redis, Valkey, KeyDB, Redis Stack — all work |
@@ -93,8 +93,11 @@ The `@upstash/redis` SDK sends ALL commands as HTTP POST with JSON body. URL-pat
 | `GET /` | GET | P0 | Health check (SRH compat: returns welcome message) |
 | `GET /health` | GET | P0 | Rich health check (Redis probe, shutdown state) |
 | `GET /metrics` | GET | P1 | Prometheus metrics (opt-in) |
-| `GET /{command}/{args...}` | GET | P2 | URL-path command encoding (deferred — SDK doesn't use it) |
-| `POST /subscribe/{channel}` | POST | P2 | Pub/Sub SSE streaming (deferred) |
+| `GET /{command}/{args...}` | GET | P1 | URL-path command encoding |
+| `POST /{command}/{args...}` | POST | P1 | URL-path command with raw body appended as value |
+| `PUT /{command}/{args...}` | PUT | P1 | URL-path command with raw body appended as value |
+| `GET\|POST /subscribe/{channel}` | GET/POST | P1 | Pub/Sub SSE streaming |
+| `POST /publish/{channel}/{message}` | POST | P1 | Pub/Sub publish shortcut |
 | `POST /monitor` | POST | P2 | MONITOR SSE streaming (deferred) |
 
 ### Request Format
@@ -164,7 +167,7 @@ Individual entries can have `error` instead of `result`.
 
 `Authorization: Bearer <token>` header on every request. Token validated against `UPREDIS_TOKEN` env var.
 
-The SDK also supports `?_token=<token>` query parameter, but we can defer this (SDK always uses the header).
+The Upstash REST `_token=<token>` query parameter is also supported. If both are present, the Authorization header takes precedence.
 
 ### Base64 Response Encoding
 
@@ -174,7 +177,7 @@ The SDK sends `Upstash-Encoding: base64` header by default. When present, the se
 
 | Value type | Encoding behavior |
 |-----------|-------------------|
-| String | Base64-encode (including `"OK"` and `"QUEUED"` — SDK handles both encoded and literal) |
+| String | Base64-encode, except literal `"OK"` per Upstash REST docs |
 | Number (integer/double) | Never encode — must be a JSON number |
 | Null | Never encode — must be JSON `null` |
 | Array | Recursively encode each element |
@@ -187,7 +190,7 @@ The SDK sends `Upstash-Encoding: base64` header by default. When present, the se
 - `typeof "string"` + `=== "OK"` → pass through (short-circuit, no decoding)
 - `typeof "string"` + other → `atob()` + `TextDecoder` (with silent fallback on invalid base64)
 
-**Simplest correct implementation:** Base64-encode ALL strings (including `"OK"`). The SDK handles this correctly — SRH does exactly this and passes the SDK test suite.
+Current implementation preserves literal `"OK"` and base64-encodes other strings. The SDK handles both literal and encoded `"OK"`, but preserving it matches the public Upstash REST docs for raw HTTP clients.
 
 ---
 
@@ -501,7 +504,7 @@ The core business logic. Parse a JSON command array, forward to Redis, translate
   - Strings are base64-encoded
   - Numbers pass through
   - Null passes through
-  - "OK" is encoded (SRH approach — SDK handles both)
+  - "OK" stays literal to match Upstash REST docs
   - Nested arrays recursively encoded
   - Empty string is encoded
   - Mixed type arrays
@@ -574,8 +577,9 @@ Run the actual `@upstash/redis` SDK test suite against up-redis, same approach a
 ### Phase 6 — Deferred (only if needed)
 
 - [ ] URL-path command encoding (`GET /set/key/value`) — SDK doesn't use it, but curl users might want it
-- [ ] `?_token=<token>` query parameter auth — SDK doesn't use it
-- [ ] Pub/Sub SSE streaming (`POST /subscribe/{channel}`, `POST /monitor`)
+- [x] `?_token=<token>` query parameter auth
+- [x] Pub/Sub SSE streaming (`GET|POST /subscribe/{channel}`)
+- [ ] `POST /monitor` SSE streaming
 - [ ] `Upstash-Response-Format: resp2` header (raw RESP2 wire format response)
 - [ ] `upstash-sync-token` read-your-writes support (echo token)
 - [ ] Multi-token mode (JSON config file mapping tokens → Redis backends, like SRH's file mode)
@@ -812,14 +816,15 @@ jobs:
 
 | Aspect | Upstash | up-redis | Impact |
 |--------|---------|----------|--------|
-| Read-your-writes | Multi-region sync tokens | Not supported (v1) | Single-region only. No impact for self-hosted. |
-| URL-path encoding | `GET /set/key/value` | Not supported (v1) | SDK never uses this. Curl users need to use POST. |
-| Pub/Sub SSE | `POST /subscribe/{channel}` | Not supported (v1) | Use direct Redis connection for Pub/Sub. |
+| Read-your-writes | Multi-region sync tokens | Not supported | Single-region only. No impact for self-hosted. |
+| URL-path encoding | `GET /set/key/value` | Supported | Also supports POST/PUT path commands with raw body appended as value. |
+| Pub/Sub SSE | `POST /subscribe/{channel}` | Supported | Pattern subscribe still not supported by Bun.redis. |
 | RedisJSON | Upstash-specific response format | Standard Redis Stack format | Some JSON commands may behave differently. |
-| Read-only tokens | ACL-based restrictions | Not supported (v1) | Single token with full access. |
+| Read-only tokens | ACL-based restrictions | Not supported | Single token with full access. |
 | Rate limiting | Built-in | Not built-in | Use reverse proxy (nginx, Caddy) if needed. |
 | Multi-region | Built-in | Not supported | Self-hosted is single-region by design. |
-| MONITOR | SSE streaming | Not supported (v1) | Use `redis-cli monitor` directly. |
+| MONITOR | SSE streaming | Not supported | Use `redis-cli monitor` directly. |
+| RESP2 response format | `Upstash-Response-Format: resp2` | Not supported | JSON responses are supported. |
 
 ### SRH behavioral differences (inherited)
 
