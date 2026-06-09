@@ -106,9 +106,20 @@ describe("SDK: SCAN operations", () => {
 			await redis.set(key, `v${i}`)
 		}
 
-		const [cursor, foundKeys] = await redis.scan(0, { match: `${prefix}:*`, count: 100 })
-		// SDK returns cursor as string (Redis SCAN cursor is a string)
-		expect(typeof cursor === "number" || typeof cursor === "string").toBe(true)
+		let cursor: string | number = 0
+		const foundKeys: string[] = []
+		do {
+			const [nextCursor, page] = (await redis.scan(cursor, {
+				match: `${prefix}:*`,
+				count: 100,
+			})) as [string | number, string[]]
+			// SDK returns cursor as string (Redis SCAN cursor is a string)
+			expect(typeof nextCursor === "number" || typeof nextCursor === "string").toBe(true)
+			expect(Array.isArray(page)).toBe(true)
+			foundKeys.push(...page)
+			cursor = nextCursor
+		} while (String(cursor) !== "0" && foundKeys.length === 0)
+
 		expect(Array.isArray(foundKeys)).toBe(true)
 		expect(foundKeys.length).toBeGreaterThanOrEqual(1)
 	})
