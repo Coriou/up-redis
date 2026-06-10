@@ -23,6 +23,10 @@ app.use(async (c, next) => {
 	c.header("X-Content-Type-Options", "nosniff")
 	c.header("X-Frame-Options", "DENY")
 	c.header("Cache-Control", "no-store")
+	// Upstash's SDK tracks this header for multi-region read-your-writes.
+	// A single Redis backend is already strongly consistent, so a stable token
+	// is enough to preserve protocol compatibility for clients that inspect it.
+	c.header("upstash-sync-token", "0")
 })
 
 // Logger on all routes

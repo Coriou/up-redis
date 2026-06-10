@@ -117,7 +117,7 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 412 tests including 94 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 414 tests including 95 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
@@ -156,13 +156,13 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
 | Docker image | ~100MB | ~50MB (Bun Alpine) |
-| Tests | External | 412 built-in (unit + integration + SDK compat) |
+| Tests | External | 414 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
 | Aspect | Upstash | up-redis |
 |--------|---------|----------|
-| Read-your-writes | Multi-region sync tokens | Not needed (single-region) |
+| Read-your-writes | Multi-region sync tokens | Stable token echoed; single-region consistency comes from Redis |
 | UNLINK with 0 keys | Silently succeeds | Redis returns error |
 | ZRANGE LIMIT | Works without BYSCORE/BYLEX | Redis requires BYSCORE/BYLEX |
 | RedisJSON | Custom response format | Standard Redis Stack format |
@@ -268,13 +268,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-412 tests across three tiers:
+414 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
 | **Unit** | 171 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
-| **Integration** | 147 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
-| **SDK Compatibility** | 94 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class and SDK 1.38 auto-pipeline behavior) |
+| **Integration** | 148 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
+| **SDK Compatibility** | 95 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
 bun test                       # All tests

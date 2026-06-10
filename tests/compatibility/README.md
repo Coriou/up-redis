@@ -22,7 +22,7 @@ bun test tests/compatibility
 These are documented differences between Upstash and standard Redis:
 
 - **RedisJSON commands** — Upstash has custom JSON response formats that differ from Redis Stack
-- **Read-your-writes sync tokens** — Upstash multi-region feature, not applicable to self-hosted
+- **Multi-region read-your-writes waiting** — up-redis echoes a stable sync token for SDK compatibility, but does not need cross-region waiting because it talks to one Redis backend
 - **UNLINK with 0 keys** — Upstash silently succeeds, Redis returns an error
 - **ZRANGE with LIMIT without BYSCORE/BYLEX** — Upstash allows it, Redis requires the flag
 

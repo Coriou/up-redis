@@ -212,6 +212,19 @@ describe("Security headers", () => {
 		expect(res.headers.get("cache-control")).toBe("no-store")
 	})
 
+	test("API responses include stable Upstash sync token", async () => {
+		const res = await fetch(`${BASE_URL}/`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${TOKEN}`,
+			},
+			body: JSON.stringify(["PING"]),
+		})
+		expect(res.status).toBe(200)
+		expect(res.headers.get("upstash-sync-token")).toBe("0")
+	})
+
 	test("security headers on 401 responses", async () => {
 		const res = await fetch(`${BASE_URL}/`, {
 			method: "POST",

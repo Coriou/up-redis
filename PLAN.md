@@ -555,7 +555,7 @@ Run the actual `@upstash/redis` SDK test suite against up-redis, same approach a
 - [ ] CI job: clone `upstash/redis-js`, install, configure env vars, run `bun test`
 - [ ] Identify and document which tests to skip:
   - JSON command tests (3 files — RedisJSON response format differences, same as SRH)
-  - `read-your-writes.test.ts` (sync tokens — Upstash-specific feature, not needed for self-hosted)
+  - `read-your-writes.test.ts` (multi-region waiting semantics — stable sync-token header is covered locally)
   - Any Upstash-specific provisioning tests
 - [ ] Fix compatibility issues discovered by the test suite
 - [ ] `tests/compatibility/README.md` — document the process and known exclusions
@@ -581,7 +581,7 @@ Run the actual `@upstash/redis` SDK test suite against up-redis, same approach a
 - [x] Pub/Sub SSE streaming (`GET|POST /subscribe/{channel}`)
 - [ ] `POST /monitor` SSE streaming
 - [ ] `Upstash-Response-Format: resp2` header (raw RESP2 wire format response)
-- [ ] `upstash-sync-token` read-your-writes support (echo token)
+- [x] `upstash-sync-token` read-your-writes support (stable echo token; no multi-region waiting needed)
 - [ ] Multi-token mode (JSON config file mapping tokens → Redis backends, like SRH's file mode)
 - [ ] TLS support (currently relies on reverse proxy like Caddy/nginx)
 - [ ] Redis Cluster support (command routing, MOVED/ASK redirect following)
@@ -747,13 +747,13 @@ Run `@upstash/redis` SDK's own test suite against up-redis. This is the ultimate
 
 **Approach (same as SRH):**
 1. Clone `upstash/redis-js` in CI
-2. Delete known-incompatible test files (JSON commands, sync tokens)
+2. Delete known-incompatible test files (JSON commands, multi-region sync-token waiting)
 3. Set `UPSTASH_REDIS_REST_URL=http://localhost:8080` + `UPSTASH_REDIS_REST_TOKEN=test-token`
 4. Run `bun test packages/redis/pkg --bail --timeout 20000`
 
 **Expected exclusions:**
 - `json_get.test.ts`, `json_mget.test.ts`, `json_objlen.test.ts` (RedisJSON format differences)
-- `read-your-writes.test.ts` (Upstash-specific sync tokens)
+- `read-your-writes.test.ts` (Upstash-specific multi-region sync-token waiting)
 - Possibly more JSON tests if Redis Stack isn't available
 
 **Expected test count:** ~500+ tests from the SDK suite.
@@ -816,7 +816,7 @@ jobs:
 
 | Aspect | Upstash | up-redis | Impact |
 |--------|---------|----------|--------|
-| Read-your-writes | Multi-region sync tokens | Not supported | Single-region only. No impact for self-hosted. |
+| Read-your-writes | Multi-region sync tokens | Stable token echoed | Single-region Redis already provides local read-after-write consistency; no cross-region waiting. |
 | URL-path encoding | `GET /set/key/value` | Supported | Also supports POST/PUT path commands with raw body appended as value. |
 | Pub/Sub SSE | `POST /subscribe/{channel}` | Supported | Pattern subscribe still not supported by Bun.redis. |
 | RedisJSON | Upstash-specific response format | Standard Redis Stack format | Some JSON commands may behave differently. |

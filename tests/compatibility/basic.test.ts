@@ -16,6 +16,17 @@ afterAll(async () => {
 })
 
 describe("SDK: basic operations", () => {
+	test("readYourWrites sync token is populated", async () => {
+		const syncRedis = createRedis()
+		const key = k("sync")
+
+		expect(syncRedis.readYourWritesSyncToken ?? "").toBe("")
+		await syncRedis.set(key, "ready")
+		expect(syncRedis.readYourWritesSyncToken).toBe("0")
+		expect(await syncRedis.get<string>(key)).toBe("ready")
+		expect(syncRedis.readYourWritesSyncToken).toBe("0")
+	})
+
 	test("set + get string", async () => {
 		const key = k()
 		await redis.set(key, "hello")
