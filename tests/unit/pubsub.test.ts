@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { formatMessageEvent, formatSubscribeEvent } from "../../src/translate/pubsub"
+import {
+	formatMessageEvent,
+	formatPatternMessageEvent,
+	formatPatternSubscribeEvent,
+	formatSubscribeEvent,
+} from "../../src/translate/pubsub"
 
 describe("formatSubscribeEvent", () => {
 	test("basic channel", () => {
@@ -8,6 +13,12 @@ describe("formatSubscribeEvent", () => {
 
 	test("count greater than 1", () => {
 		expect(formatSubscribeEvent("ch", 3)).toBe("subscribe,ch,3")
+	})
+})
+
+describe("formatPatternSubscribeEvent", () => {
+	test("basic pattern", () => {
+		expect(formatPatternSubscribeEvent("news:*", 1)).toBe("psubscribe,news:*,1")
 	})
 })
 
@@ -31,5 +42,26 @@ describe("formatMessageEvent", () => {
 
 	test("message with unicode", () => {
 		expect(formatMessageEvent("ch", "hello world")).toBe("message,ch,hello world")
+	})
+})
+
+describe("formatPatternMessageEvent", () => {
+	test("basic pattern message", () => {
+		expect(formatPatternMessageEvent("news:*", "news:1", "hello")).toBe(
+			'pmessage,news:*,news:1,"hello"',
+		)
+	})
+
+	test("message with commas", () => {
+		expect(formatPatternMessageEvent("news:*", "news:1", "a,b,c")).toBe(
+			'pmessage,news:*,news:1,"a,b,c"',
+		)
+	})
+
+	test("JSON message is preserved", () => {
+		const json = JSON.stringify({ key: "value" })
+		expect(formatPatternMessageEvent("news:*", "news:1", json)).toBe(
+			`pmessage,news:*,news:1,${json}`,
+		)
 	})
 })

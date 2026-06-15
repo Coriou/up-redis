@@ -13,6 +13,14 @@ services:
     environment:
       UPREDIS_LOG_LEVEL: debug
       UPREDIS_LOG_FORMAT: text
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "fetch('http://localhost:8080/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
 
   redis:
     ports:

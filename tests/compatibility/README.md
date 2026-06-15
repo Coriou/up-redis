@@ -1,7 +1,7 @@
 # SDK Compatibility Tests
 
 These tests use the real `@upstash/redis` SDK pointed at up-redis to verify drop-in compatibility.
-The checked-in dependency is kept current with npm latest during maintenance; the suite currently covers `@upstash/redis` 1.38 behavior, including split read/write auto-pipeline batches.
+The checked-in dependency is kept current with npm latest during maintenance; the suite currently covers `@upstash/redis` 1.38 behavior, including split read/write auto-pipeline batches and `subscribe`/`psubscribe` SSE handling.
 
 ## Running
 

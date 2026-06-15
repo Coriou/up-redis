@@ -58,7 +58,7 @@ app.use("/*", authMiddleware)
 // would never fire on the stream itself, but bypassing it is cleaner and
 // avoids any framework-level interaction.
 const timeoutGate: MiddlewareHandler = async (c, next) => {
-	if (c.req.path.startsWith("/subscribe/")) {
+	if (c.req.path.startsWith("/subscribe/") || c.req.path.startsWith("/psubscribe/")) {
 		return next()
 	}
 	return timeoutMiddleware(c, next)

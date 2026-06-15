@@ -254,6 +254,64 @@ describe("SDK Subscriber class", () => {
 
 		await sub.unsubscribe()
 	})
+
+	test("psubscribe() receives matching channel messages", async () => {
+		const base = ch("compat-pattern")
+		const pattern = `${base}:*`
+		const channel = `${base}:one`
+		const received: Array<{ pattern: string; channel: string; message: unknown }> = []
+
+		const sub = redis.psubscribe<string>(pattern)
+		subscribers.push(sub)
+
+		sub.on("pmessage", (data) => {
+			received.push(data)
+		})
+
+		await new Promise<void>((resolve) => {
+			sub.on("psubscribe", () => resolve())
+		})
+
+		await redis.publish(channel, "pattern-message")
+
+		const start = Date.now()
+		while (received.length < 1 && Date.now() - start < 3000) {
+			await new Promise((r) => setTimeout(r, 20))
+		}
+
+		expect(received).toEqual([{ pattern, channel, message: "pattern-message" }])
+
+		await sub.unsubscribe()
+	})
+
+	test("pattern-specific listener (pmessage:pattern)", async () => {
+		const base = ch("compat-pattern-specific")
+		const pattern = `${base}:*`
+		const channel = `${base}:one`
+		const received: string[] = []
+
+		const sub = redis.psubscribe<string>(pattern)
+		subscribers.push(sub)
+
+		sub.on(`pmessage:${pattern}`, (data) => {
+			received.push(data.message as string)
+		})
+
+		await new Promise<void>((resolve) => {
+			sub.on("psubscribe", () => resolve())
+		})
+
+		await redis.publish(channel, "targeted-pattern")
+
+		const start = Date.now()
+		while (received.length < 1 && Date.now() - start < 3000) {
+			await new Promise((r) => setTimeout(r, 20))
+		}
+
+		expect(received).toEqual(["targeted-pattern"])
+
+		await sub.unsubscribe()
+	})
 })
 
 describe("SDK compatibility: PubSub (raw SSE)", () => {

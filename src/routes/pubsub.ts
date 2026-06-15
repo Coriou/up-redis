@@ -5,12 +5,19 @@ import { type SSEStreamingApi, streamSSE } from "hono/streaming"
 import { config } from "../config"
 import { log } from "../logger"
 import { createDedicatedConnection, getClient } from "../redis"
+import { createPatternSubscription, type PatternSubscription } from "../redis-pattern"
 import { shuttingDown } from "../shutdown"
-import { formatMessageEvent, formatSubscribeEvent } from "../translate/pubsub"
+import {
+	formatMessageEvent,
+	formatPatternMessageEvent,
+	formatPatternSubscribeEvent,
+	formatSubscribeEvent,
+} from "../translate/pubsub"
 
 type ActiveSubscription = {
-	channel: string
-	redis: RedisClient
+	target: string
+	redis?: RedisClient
+	pattern?: PatternSubscription
 	stream: SSEStreamingApi
 }
 
@@ -39,8 +46,8 @@ function hasControlCharacters(str: string): boolean {
 async function handleSubscribe(c: Context) {
 	const channel = c.req.param("channel") as string
 
-	if (!channel || channel.length > MAX_CHANNEL_NAME_LENGTH || hasControlCharacters(channel)) {
-		return c.json({ error: "Invalid channel name" }, 400)
+	if (!isValidSubscriptionTarget(channel)) {
+		return c.json({ error: "Invalid channel" }, 400)
 	}
 
 	// Reject new subscriptions during shutdown — the shutdownGuard middleware
@@ -81,7 +88,7 @@ async function handleSubscribe(c: Context) {
 			return
 		}
 
-		const entry: ActiveSubscription = { channel, redis: sub, stream }
+		const entry: ActiveSubscription = { target: channel, redis: sub, stream }
 		activeSubscriptions.add(entry)
 
 		// Race: shutdown started between request entry and now. Bail to avoid
@@ -179,11 +186,120 @@ async function handleSubscribe(c: Context) {
 	})
 }
 
+async function handlePatternSubscribe(c: Context) {
+	const pattern = c.req.param("pattern") as string
+
+	if (!isValidSubscriptionTarget(pattern)) {
+		return c.json({ error: "Invalid pattern" }, 400)
+	}
+
+	if (shuttingDown()) {
+		return c.json({ error: "Service Unavailable" }, 503)
+	}
+
+	if (activeSubscriptions.size >= config.maxSubscriptions) {
+		log.warn("subscription limit reached", {
+			requestId: c.get("requestId"),
+			pattern,
+			active: activeSubscriptions.size,
+			limit: config.maxSubscriptions,
+		})
+		return c.json({ error: "Too Many Subscriptions" }, 503)
+	}
+
+	return streamSSE(c, async (stream) => {
+		let disconnected = false
+		let ready = false
+		const pendingMessages: string[] = []
+
+		const writeData = (data: string) => {
+			if (disconnected) return
+			stream.writeSSE({ data }).catch(() => {
+				disconnected = true
+			})
+		}
+
+		const abortPromise = new Promise<void>((resolve) => {
+			stream.onAbort(() => {
+				disconnected = true
+				resolve()
+			})
+		})
+
+		let sub: PatternSubscription
+		try {
+			sub = await createPatternSubscription(pattern, (matchedPattern, channel, message) => {
+				const data = formatPatternMessageEvent(matchedPattern, channel, message)
+				if (!ready) {
+					pendingMessages.push(data)
+					return
+				}
+				writeData(data)
+			})
+		} catch (err) {
+			log.error("pubsub pattern connection failed", {
+				requestId: c.get("requestId"),
+				pattern,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			try {
+				await stream.close()
+			} catch {}
+			return
+		}
+
+		const entry: ActiveSubscription = { target: pattern, pattern: sub, stream }
+		activeSubscriptions.add(entry)
+
+		if (disconnected || shuttingDown()) {
+			activeSubscriptions.delete(entry)
+			sub.close()
+			try {
+				await stream.close()
+			} catch {}
+			return
+		}
+
+		let keepaliveTimer: ReturnType<typeof setInterval> | null = null
+
+		try {
+			try {
+				await stream.writeSSE({ data: formatPatternSubscribeEvent(pattern, sub.count) })
+				ready = true
+				for (const data of pendingMessages.splice(0)) {
+					writeData(data)
+				}
+			} catch {
+				return
+			}
+
+			log.debug("pubsub psubscribe", { pattern })
+
+			stream.write(":keep-alive\n\n").catch(() => {
+				disconnected = true
+			})
+			keepaliveTimer = setInterval(() => {
+				if (disconnected) return
+				stream.write(":keep-alive\n\n").catch(() => {
+					disconnected = true
+				})
+			}, KEEPALIVE_INTERVAL_MS)
+
+			await Promise.race([abortPromise, sub.closed])
+		} finally {
+			if (keepaliveTimer) clearInterval(keepaliveTimer)
+			activeSubscriptions.delete(entry)
+			sub.close()
+			log.debug("pubsub punsubscribe", { pattern })
+		}
+	})
+}
+
 async function handlePublish(c: Context) {
 	const channel = c.req.param("channel") as string
 	const message = c.req.param("message") as string
 
-	if (!channel || channel.length > MAX_CHANNEL_NAME_LENGTH || hasControlCharacters(channel)) {
+	if (!isValidSubscriptionTarget(channel)) {
 		return c.json({ error: "Invalid channel name" }, 400)
 	}
 
@@ -199,6 +315,8 @@ async function handlePublish(c: Context) {
 // SDK uses POST, custom clients (like resumable-stream adapter) use GET
 pubsubRoutes.post("/subscribe/:channel", handleSubscribe)
 pubsubRoutes.get("/subscribe/:channel", handleSubscribe)
+pubsubRoutes.post("/psubscribe/:pattern", handlePatternSubscribe)
+pubsubRoutes.get("/psubscribe/:pattern", handlePatternSubscribe)
 pubsubRoutes.post("/publish/:channel/:message", handlePublish)
 
 /** Close all active subscriptions (called during graceful shutdown) */
@@ -214,12 +332,15 @@ export async function closeAllSubscriptions(): Promise<void> {
 			try {
 				entry.stream.abort()
 			} catch {}
-			try {
-				await entry.redis.unsubscribe(entry.channel)
-			} catch {}
-			try {
-				entry.redis.close()
-			} catch {}
+			if (entry.redis) {
+				try {
+					await entry.redis.unsubscribe(entry.target)
+				} catch {}
+				try {
+					entry.redis.close()
+				} catch {}
+			}
+			entry.pattern?.close()
 		}),
 	)
 }
@@ -227,4 +348,10 @@ export async function closeAllSubscriptions(): Promise<void> {
 /** Get count of active subscriptions */
 export function activeSubscriptionCount(): number {
 	return activeSubscriptions.size
+}
+
+function isValidSubscriptionTarget(target: string): boolean {
+	return Boolean(
+		target && target.length <= MAX_CHANNEL_NAME_LENGTH && !hasControlCharacters(target),
+	)
 }

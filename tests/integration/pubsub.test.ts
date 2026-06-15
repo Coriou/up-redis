@@ -14,10 +14,18 @@ type SSESubscription = {
 
 /** Open an SSE subscribe connection and accumulate data lines */
 function sseSubscribe(channel: string, method: "GET" | "POST" = "POST"): SSESubscription {
+	return sseOpen(`/subscribe/${encodeURIComponent(channel)}`, method)
+}
+
+function ssePatternSubscribe(pattern: string, method: "GET" | "POST" = "POST"): SSESubscription {
+	return sseOpen(`/psubscribe/${encodeURIComponent(pattern)}`, method)
+}
+
+function sseOpen(path: string, method: "GET" | "POST" = "POST"): SSESubscription {
 	const controller = new AbortController()
 	const events: string[] = []
 
-	const response = fetch(`${BASE_URL}/subscribe/${channel}`, {
+	const response = fetch(`${BASE_URL}${path}`, {
 		method,
 		headers: AUTH,
 		signal: controller.signal,
@@ -403,5 +411,55 @@ describe("GET/POST /subscribe/:channel", () => {
 
 		sub.controller.abort()
 		sub2.controller.abort()
+	})
+})
+
+describe("GET/POST /psubscribe/:pattern", () => {
+	test("returns pattern subscribe confirmation as first event", async () => {
+		const pattern = `${ch("pattern-confirm")}:*`
+		const sub = tracked(ssePatternSubscribe(pattern))
+
+		await sub.waitForEvents(1)
+		expect(sub.events[0]).toBe(`psubscribe,${pattern},1`)
+
+		sub.controller.abort()
+	})
+
+	test("receives messages from matching channels", async () => {
+		const base = ch("pattern-match")
+		const pattern = `${base}:*`
+		const channel = `${base}:a`
+		const sub = tracked(ssePatternSubscribe(pattern))
+
+		await sub.waitForEvents(1)
+
+		await cmd("PUBLISH", channel, "hello-pattern")
+		await sub.waitForEvents(2)
+
+		expect(sub.events[1]).toBe(`pmessage,${pattern},${channel},"hello-pattern"`)
+
+		sub.controller.abort()
+	})
+
+	test("ignores non-matching channels", async () => {
+		const base = ch("pattern-isolated")
+		const pattern = `${base}:*`
+		const sub = tracked(ssePatternSubscribe(pattern))
+
+		await sub.waitForEvents(1)
+
+		await cmd("PUBLISH", `${base}-other`, "not-for-pattern")
+		await new Promise((r) => setTimeout(r, 200))
+
+		expect(sub.events).toEqual([`psubscribe,${pattern},1`])
+
+		sub.controller.abort()
+	})
+
+	test("auth required", async () => {
+		const res = await fetch(`${BASE_URL}/psubscribe/${encodeURIComponent(`${ch()}:*`)}`, {
+			method: "POST",
+		})
+		expect(res.status).toBe(401)
 	})
 })

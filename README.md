@@ -102,6 +102,12 @@ curl -N http://localhost:8080/subscribe/my-channel \
 # → data: subscribe,my-channel,1
 # → data: message,my-channel,hello    (when someone publishes)
 
+# Pattern subscribe (SSE stream — stays open)
+curl -N 'http://localhost:8080/psubscribe/news:*' \
+  -H "Authorization: Bearer your-token"
+# → data: psubscribe,news:*,1
+# → data: pmessage,news:*,news:1,"hello"    (when a matching channel publishes)
+
 # Publish to channel (from another terminal)
 curl -X POST http://localhost:8080/publish/my-channel/hello \
   -H "Authorization: Bearer your-token"
@@ -117,7 +123,7 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 414 tests including 95 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 424 tests including 97 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
@@ -126,6 +132,7 @@ Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/
 | `POST /pipeline` | Supported — batch execution |
 | `POST /multi-exec` | Supported — atomic transactions |
 | `GET\|POST /subscribe/:channel` | Supported — PubSub over SSE |
+| `GET\|POST /psubscribe/:pattern` | Supported — pattern PubSub over SSE |
 | `POST /publish/:channel/:message` | Supported — PubSub publish shortcut |
 | `GET /` | Supported — health check (welcome message) |
 | `GET /health` | Supported — rich health with Redis probe (readiness) |
@@ -156,7 +163,7 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
 | Docker image | ~100MB | ~50MB (Bun Alpine) |
-| Tests | External | 414 built-in (unit + integration + SDK compat) |
+| Tests | External | 424 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
@@ -166,7 +173,7 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | UNLINK with 0 keys | Silently succeeds | Redis returns error |
 | ZRANGE LIMIT | Works without BYSCORE/BYLEX | Redis requires BYSCORE/BYLEX |
 | RedisJSON | Custom response format | Standard Redis Stack format |
-| PSUBSCRIBE (pattern) | `POST /psubscribe/{pattern}` | Not yet supported (SUBSCRIBE works) |
+| PUNSUBSCRIBE/UNSUBSCRIBE REST endpoints | Stream command endpoints | SDK `unsubscribe()` aborts the SSE stream; direct endpoints are not exposed |
 | MONITOR SSE | `POST /monitor` | Not yet supported; use `redis-cli monitor` directly |
 | RESP2 response format | `Upstash-Response-Format: resp2` | Not yet supported; JSON responses are supported |
 | Rate limiting | Built-in | Use reverse proxy (nginx, Caddy) |
@@ -268,13 +275,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-414 tests across three tiers:
+424 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 171 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
-| **Integration** | 148 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
-| **SDK Compatibility** | 95 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, and SDK 1.38 auto-pipeline behavior) |
+| **Unit** | 175 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
+| **Integration** | 152 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
+| **SDK Compatibility** | 97 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
 bun test                       # All tests
