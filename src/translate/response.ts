@@ -13,7 +13,18 @@
 export function normalizeResp3(value: unknown): unknown {
 	if (value === null || value === undefined) return null
 	if (typeof value === "boolean") return value ? 1 : 0
-	if (typeof value === "number" || typeof value === "string") return value
+	if (typeof value === "number") {
+		// JSON.stringify turns Infinity/-Infinity/NaN into null, which would silently
+		// corrupt e.g. ZSCORE / ZADD INCR / ZINCRBY / GEODIST of an infinite score.
+		// Emit the Redis string forms ("inf"/"-inf"/"nan") that real Redis and Upstash return.
+		if (!Number.isFinite(value)) {
+			if (value === Number.POSITIVE_INFINITY) return "inf"
+			if (value === Number.NEGATIVE_INFINITY) return "-inf"
+			return "nan"
+		}
+		return value
+	}
+	if (typeof value === "string") return value
 	if (Array.isArray(value)) return value.map(normalizeResp3)
 
 	if (typeof value === "object") {

@@ -1,12 +1,14 @@
 import { RedisClient } from "bun"
 import { config } from "./config"
 import { log } from "./logger"
+import { withTimeout } from "./util/timeout"
 
 let client: RedisClient | null = null
 let lastPingOk = true
 let lastPingTime = 0
 const PING_CACHE_MS = 1000
 const STARTUP_PING_TIMEOUT_MS = 10_000
+const RUNTIME_PING_TIMEOUT_MS = 5_000
 
 export function getClient(): RedisClient {
 	if (!client) {
@@ -36,24 +38,10 @@ export async function initRedis(): Promise<void> {
 	}
 
 	// Bound startup so a hung Redis doesn't wedge the entire process forever.
-	// connectionTimeout above bounds the TCP handshake; this bounds PING reply.
-	let pingTimer: ReturnType<typeof setTimeout> | undefined
-	const ping = client.ping()
-	// Suppress unhandled rejection on the original ping if the timeout wins.
-	ping.catch(() => {})
-	const timeout = new Promise<string>((_, reject) => {
-		pingTimer = setTimeout(
-			() => reject(new Error(`Redis PING timed out after ${STARTUP_PING_TIMEOUT_MS}ms`)),
-			STARTUP_PING_TIMEOUT_MS,
-		)
-	})
-	try {
-		const pong = await Promise.race([ping, timeout])
-		if (pong !== "PONG") {
-			throw new Error(`Redis PING failed: ${pong}`)
-		}
-	} finally {
-		if (pingTimer) clearTimeout(pingTimer)
+	// connectionTimeout above bounds the TCP handshake; this bounds the PING reply.
+	const pong = await withTimeout(client.ping(), STARTUP_PING_TIMEOUT_MS, "Redis PING")
+	if (pong !== "PONG") {
+		throw new Error(`Redis PING failed: ${pong}`)
 	}
 }
 
@@ -105,7 +93,9 @@ export async function isRedisHealthy(): Promise<boolean> {
 	// Set time before PING to prevent concurrent callers from stampeding
 	lastPingTime = now
 	try {
-		const pong = await client.ping()
+		// /health is registered before the request-timeout middleware, so bound the
+		// probe here — otherwise a wedged-but-TCP-alive Redis would hang the request.
+		const pong = await withTimeout(client.ping(), RUNTIME_PING_TIMEOUT_MS, "Redis PING")
 		lastPingOk = pong === "PONG"
 	} catch {
 		lastPingOk = false

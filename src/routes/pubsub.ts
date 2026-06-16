@@ -8,6 +8,7 @@ import { createDedicatedConnection, getClient } from "../redis"
 import { createPatternSubscription, type PatternSubscription } from "../redis-pattern"
 import { shuttingDown } from "../shutdown"
 import {
+	createConfirmationOrderedBuffer,
 	formatMessageEvent,
 	formatPatternMessageEvent,
 	formatPatternSubscribeEvent,
@@ -118,12 +119,18 @@ async function handleSubscribe(c: Context) {
 			})
 
 			let disconnected = false
-			const listener = (message: string, ch: string) => {
-				if (disconnected) return
-				stream.writeSSE({ data: formatMessageEvent(ch, message) }).catch(() => {
+			// Buffer messages until the subscribe confirmation is written, so the SDK
+			// always sees the confirmation first even if a publisher races a message
+			// in during subscription setup (mirrors the pattern-subscribe path).
+			const ordered = createConfirmationOrderedBuffer((data) => {
+				stream.writeSSE({ data }).catch(() => {
 					// Stop processing further messages — abort handler cleans up
 					disconnected = true
 				})
+			})
+			const listener = (message: string, ch: string) => {
+				if (disconnected) return
+				ordered.push(formatMessageEvent(ch, message))
 			}
 
 			let count: number
@@ -138,13 +145,15 @@ async function handleSubscribe(c: Context) {
 				return
 			}
 
-			// Send subscription confirmation (Upstash protocol)
+			// Send subscription confirmation (Upstash protocol) BEFORE any message,
+			// then release any messages buffered during subscription setup.
 			try {
 				await stream.writeSSE({ data: formatSubscribeEvent(channel, count) })
 			} catch {
 				// Client closed before we could send confirmation; cleanup runs in finally
 				return
 			}
+			ordered.release()
 
 			log.debug("pubsub subscribe", { channel })
 
@@ -307,8 +316,8 @@ async function handlePublish(c: Context) {
 		const result = await getClient().publish(channel, message)
 		return c.json({ result })
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err)
-		return c.json({ error: message }, 400)
+		const errorMessage = err instanceof Error ? err.message : String(err)
+		return c.json({ error: errorMessage }, 400)
 	}
 }
 

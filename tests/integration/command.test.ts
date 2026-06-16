@@ -51,6 +51,131 @@ describe("POST / (single command)", () => {
 		expect(result).toBe(11)
 	})
 
+	// Regression: Bun.redis hands back JS Infinity for an infinite score, which
+	// JSON.stringify would turn into null. The proxy must emit the Redis string
+	// forms "inf"/"-inf" instead (see translate/response.ts).
+	test("ZSCORE of an infinite score returns the string inf, not null", async () => {
+		const key = k()
+		await cmd("ZADD", key, "inf", "member")
+		const result = await cmd("ZSCORE", key, "member")
+		expect(result).toBe("inf")
+	})
+
+	test("ZADD INCR to -inf returns the string -inf, not null", async () => {
+		const key = k()
+		await cmd("ZADD", key, "5", "m")
+		const result = await cmd("ZADD", key, "INCR", "-inf", "m")
+		expect(result).toBe("-inf")
+	})
+
+	// Input validation: non-(string|number) args must be rejected with 400, not
+	// silently coerced (String({}) → "[object Object]", String(null) → "null").
+	test("rejects an object argument with 400", async () => {
+		const { status, data } = await api("POST", "/", ["SET", k(), { a: 1 }])
+		expect(status).toBe(400)
+		expect(data).toHaveProperty("error")
+	})
+
+	test("rejects a null argument with 400", async () => {
+		const { status } = await api("POST", "/", ["SET", k(), null])
+		expect(status).toBe(400)
+	})
+
+	test("rejects a boolean argument with 400", async () => {
+		const { status } = await api("POST", "/", ["SET", k(), true])
+		expect(status).toBe(400)
+	})
+
+	test("accepts a numeric argument, coercing it to a string", async () => {
+		const key = k()
+		await cmd("SET", key, "1")
+		const result = await cmd("EXPIRE", key, 100)
+		expect(result).toBe(1)
+	})
+
+	// Path-style: a "/" inside a value must be percent-encoded (%2F); it then
+	// round-trips correctly. An unencoded "/" is a path separator, like every
+	// URL-path API — that's a documented requirement, not silent corruption.
+	test("path-style round-trips a %2F-encoded slash in a value", async () => {
+		const key = k()
+		const headers = { Authorization: `Bearer ${TOKEN}` }
+		const setRes = await fetch(`${BASE_URL}/set/${encodeURIComponent(key)}/a%2Fb`, { headers })
+		expect(setRes.status).toBe(200)
+		const getRes = await fetch(`${BASE_URL}/get/${encodeURIComponent(key)}`, { headers })
+		const data = (await getRes.json()) as { result: unknown }
+		expect(data.result).toBe("a/b")
+	})
+
+	// Upstash-Response-Format: resp2 asks for binary RESP2; up-redis only speaks the
+	// JSON envelope. Fail loud rather than silently returning JSON the SDK's binary
+	// parser would choke on.
+	test("rejects Upstash-Response-Format: resp2 with 400", async () => {
+		const { status, data } = await api("POST", "/", ["PING"], {
+			"Upstash-Response-Format": "resp2",
+		})
+		expect(status).toBe(400)
+		expect(data).toHaveProperty("error")
+	})
+
+	test("allows Upstash-Response-Format: json", async () => {
+		const { status } = await api("POST", "/", ["PING"], { "Upstash-Response-Format": "json" })
+		expect(status).toBe(200)
+	})
+
+	// KEYS is O(N) and would hold the shared connection across the whole keyspace,
+	// so it's blocked by default (configurable via UPREDIS_ALLOW_DANGEROUS_COMMANDS).
+	test("blocks KEYS by default with 400", async () => {
+		const { status, data } = await api("POST", "/", ["KEYS", "*"])
+		expect(status).toBe(400)
+		expect((data as { error?: string }).error).toContain("UPREDIS_ALLOW_DANGEROUS_COMMANDS")
+	})
+
+	test("blocks FLUSHALL by default with 400", async () => {
+		const { status } = await api("POST", "/", ["FLUSHALL"])
+		expect(status).toBe(400)
+	})
+
+	// _token query-param auth (Upstash compat) is enabled by default.
+	test("authenticates via the _token query param by default", async () => {
+		const res = await fetch(`${BASE_URL}/?_token=${encodeURIComponent(TOKEN)}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(["PING"]),
+		})
+		expect(res.status).toBe(200)
+	})
+
+	// The SDK defaults readYourWrites:true and echoes the upstash-sync-token we emit
+	// ("0") back as a REQUEST header on subsequent calls. The proxy must accept it.
+	test("tolerates an echoed upstash-sync-token request header", async () => {
+		const { status } = await api("POST", "/", ["PING"], { "upstash-sync-token": "0" })
+		expect(status).toBe(200)
+	})
+
+	test("emits the upstash-sync-token response header", async () => {
+		const { headers } = await api("POST", "/", ["PING"])
+		expect(headers.get("upstash-sync-token")).toBe("0")
+	})
+
+	// Newer hash-field-TTL commands (Redis 7.4+) return integer arrays that must
+	// pass through normalizeResp3 unchanged (generic pass-through on the proxy).
+	test("HEXPIRE returns an integer array", async () => {
+		const key = k()
+		await cmd("HSET", key, "f1", "v1")
+		const result = await cmd("HEXPIRE", key, "100", "FIELDS", "1", "f1")
+		expect(result).toEqual([1])
+	})
+
+	test("HTTL returns an integer array with the remaining TTL", async () => {
+		const key = k()
+		await cmd("HSET", key, "f1", "v1")
+		await cmd("HEXPIRE", key, "100", "FIELDS", "1", "f1")
+		const result = (await cmd("HTTL", key, "FIELDS", "1", "f1")) as number[]
+		expect(Array.isArray(result)).toBe(true)
+		expect(result[0]).toBeGreaterThan(0)
+		expect(result[0]).toBeLessThanOrEqual(100)
+	})
+
 	// Array responses
 	test("MGET returns array with values and nulls", async () => {
 		const k1 = k()

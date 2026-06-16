@@ -53,6 +53,23 @@ app.use("/*", shutdownGuard)
 // Auth on all remaining routes
 app.use("/*", authMiddleware)
 
+// Reject the binary RESP2 response format. up-redis only speaks the JSON REST
+// envelope; returning JSON when the SDK asked for `resp2` binary would make its
+// parser choke, so fail loud with a clear 400 instead of silently misresponding.
+const responseFormatGuard: MiddlewareHandler = async (c, next) => {
+	const fmt = c.req.header("upstash-response-format")
+	if (fmt && fmt.toLowerCase() !== "json") {
+		return c.json(
+			{
+				error: `Unsupported Upstash-Response-Format: "${fmt}". up-redis only supports the JSON REST format — omit the header or set it to "json".`,
+			},
+			400,
+		)
+	}
+	await next()
+}
+app.use("/*", responseFormatGuard)
+
 // Request timeout on business routes only.
 // Skip SSE subscribe routes — streamSSE returns synchronously so the timeout
 // would never fire on the stream itself, but bypassing it is cleaner and

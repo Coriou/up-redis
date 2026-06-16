@@ -1,3 +1,5 @@
+import { config } from "./config"
+
 /**
  * Commands that must NOT be sent through the shared connection.
  *
@@ -150,6 +152,21 @@ const BLOCKING_CMDS = new Set([
 const ADMIN_CMDS = new Set(["SHUTDOWN", "REPLICAOF", "SLAVEOF", "FAILOVER", "DEBUG", "MONITOR"])
 
 /**
+ * Dangerous but Upstash-allowed commands, blocked by default. KEYS is O(N) and
+ * holds the shared connection across the whole keyspace; FLUSHALL/FLUSHDB are
+ * destructive (and their SYNC variants block); SWAPDB mutates databases globally.
+ * Operators re-enable them with UPREDIS_ALLOW_DANGEROUS_COMMANDS=true.
+ */
+const DANGEROUS_COMMANDS = new Set(["KEYS", "FLUSHALL", "FLUSHDB", "SWAPDB"])
+
+export type BlockedCommandOptions = {
+	/** Permit the dangerous-by-default commands (KEYS/FLUSHALL/FLUSHDB/SWAPDB). */
+	allowDangerous?: boolean
+	/** Extra command names to block (uppercased). */
+	extraBlocked?: ReadonlySet<string>
+}
+
+/**
  * Check if a command (with its arguments, for subcommand-style commands)
  * is blocked on the shared connection.
  *
@@ -160,6 +177,7 @@ const ADMIN_CMDS = new Set(["SHUTDOWN", "REPLICAOF", "SLAVEOF", "FAILOVER", "DEB
 export function checkBlockedCommand(
 	command: string,
 	argsOrFirstArg?: readonly string[] | string,
+	options?: BlockedCommandOptions,
 ): string | null {
 	const upper = command.toUpperCase()
 	const args = Array.isArray(argsOrFirstArg)
@@ -204,15 +222,81 @@ export function checkBlockedCommand(
 		}
 	}
 
-	// Upstash REST does not support blocking stream reads. They would also hold
-	// the shared proxy connection open until a stream receives data or the
-	// client timeout fires.
-	if (
-		(upper === "XREAD" || upper === "XREADGROUP") &&
-		args.some((arg) => arg.toUpperCase() === "BLOCK")
-	) {
-		return `${upper} BLOCK is not allowed — ${BLOCKING_REASON}`
+	// Upstash REST does not support blocking stream reads. They would also hold the
+	// shared proxy connection open until a stream receives data or the client timeout
+	// fires. The BLOCK token only carries blocking semantics in the options section:
+	// before the STREAMS keyword, and — for XREADGROUP — after the "GROUP <group>
+	// <consumer>" header. Scanning the whole arg list would wrongly reject a stream,
+	// group, or consumer literally named "BLOCK".
+	if (upper === "XREAD" || upper === "XREADGROUP") {
+		const streamsIdx = args.findIndex((arg) => arg.toUpperCase() === "STREAMS")
+		const optionsEnd = streamsIdx === -1 ? args.length : streamsIdx
+		const optionsStart = upper === "XREADGROUP" ? 3 : 0
+		const hasBlockOption = args
+			.slice(optionsStart, optionsEnd)
+			.some((arg) => arg.toUpperCase() === "BLOCK")
+		if (hasBlockOption) {
+			return `${upper} BLOCK is not allowed — ${BLOCKING_REASON}`
+		}
+	}
+
+	// Dangerous-but-Upstash-allowed commands: blocked by default (see DANGEROUS_COMMANDS).
+	const allowDangerous = options?.allowDangerous ?? config.allowDangerousCommands
+	if (!allowDangerous && DANGEROUS_COMMANDS.has(upper)) {
+		return `${upper} is not allowed by default — it can block the shared connection or destroy data. Set UPREDIS_ALLOW_DANGEROUS_COMMANDS=true to permit it.`
+	}
+
+	// Operator-defined extra blocklist (UPREDIS_BLOCKED_COMMANDS).
+	const extraBlocked = options?.extraBlocked ?? config.blockedCommands
+	if (extraBlocked.has(upper)) {
+		return `${upper} is not allowed — it is in the UPREDIS_BLOCKED_COMMANDS blocklist`
 	}
 
 	return null
+}
+
+/**
+ * Validate and normalize a raw command array (from a JSON request body) into a
+ * Redis command name + string arguments.
+ *
+ * Over the Upstash wire, command arguments arrive as JSON strings or numbers —
+ * the SDK pre-stringifies booleans/objects/arrays/null before sending. We accept
+ * `string | number` (numbers are coerced, e.g. `EXPIRE key 100`) and reject
+ * anything else with a descriptive error rather than silently coercing it:
+ * `String({})` would write the literal "[object Object]" into Redis and
+ * `String(null)` the literal "null".
+ *
+ * Throws on invalid input; callers map the error to a 400 response.
+ */
+export function parseCommandArray(raw: readonly unknown[]): {
+	command: string
+	args: string[]
+} {
+	if (raw.length === 0) {
+		throw new Error("Command must be a non-empty array")
+	}
+	if (typeof raw[0] !== "string") {
+		throw new Error(`Command name must be a string, got ${describeArgType(raw[0])}`)
+	}
+	const command = raw[0]
+	const args = new Array<string>(raw.length - 1)
+	for (let i = 1; i < raw.length; i++) {
+		const value = raw[i]
+		if (typeof value === "string") {
+			args[i - 1] = value
+		} else if (typeof value === "number" && Number.isFinite(value)) {
+			args[i - 1] = String(value)
+		} else {
+			throw new Error(
+				`Invalid argument at position ${i}: expected a string or number, got ${describeArgType(value)}`,
+			)
+		}
+	}
+	return { command, args }
+}
+
+function describeArgType(value: unknown): string {
+	if (value === null) return "null"
+	if (Array.isArray(value)) return "array"
+	return typeof value
 }

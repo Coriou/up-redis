@@ -1,4 +1,4 @@
-import { config } from "./config"
+import { assessTokenStrength, config } from "./config"
 import { log } from "./logger"
 import { closeRedis, initRedis } from "./redis"
 import { closeAllSubscriptions } from "./routes/pubsub"
@@ -8,6 +8,14 @@ import { setShuttingDown } from "./shutdown"
 async function main(): Promise<void> {
 	await initRedis()
 	log.info("connected to redis", { url: redactUrl(config.redisUrl) })
+
+	const tokenWarning = assessTokenStrength(config.token)
+	if (tokenWarning) {
+		log.warn("weak UPREDIS_TOKEN", {
+			reason: tokenWarning,
+			hint: "use a long, random secret, e.g. `openssl rand -hex 32`",
+		})
+	}
 
 	const server = Bun.serve({
 		fetch: app.fetch,

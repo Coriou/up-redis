@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { checkBlockedCommand } from "../commands"
+import { checkBlockedCommand, parseCommandArray } from "../commands"
 import { config } from "../config"
 import { getClient } from "../redis"
 import { encodeResult } from "../translate/encoding"
@@ -46,13 +46,17 @@ pipelineRoutes.post("/pipeline", async (c) => {
 		if (!Array.isArray(cmd) || cmd.length === 0) {
 			return Promise.reject(new Error("Each pipeline command must be a non-empty array"))
 		}
-		const command = String(cmd[0])
-		const args = cmd.slice(1).map(String)
-		const blocked = checkBlockedCommand(command, args)
+		let parsed: { command: string; args: string[] }
+		try {
+			parsed = parseCommandArray(cmd)
+		} catch (err) {
+			return Promise.reject(err instanceof Error ? err : new Error(String(err)))
+		}
+		const blocked = checkBlockedCommand(parsed.command, parsed.args)
 		if (blocked) {
 			return Promise.reject(new Error(blocked))
 		}
-		return redis.send(command, args)
+		return redis.send(parsed.command, parsed.args)
 	})
 
 	const settled = await Promise.allSettled(promises)

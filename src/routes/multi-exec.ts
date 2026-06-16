@@ -1,10 +1,9 @@
 import { Hono } from "hono"
-import { checkBlockedCommand } from "../commands"
+import { checkBlockedCommand, parseCommandArray } from "../commands"
 import { config } from "../config"
 import { log } from "../logger"
 import { createDedicatedConnection } from "../redis"
-import { encodeResult } from "../translate/encoding"
-import { normalizeResp3 } from "../translate/response"
+import { shapeExecResults } from "../translate/transaction"
 
 export const multiExecRoutes = new Hono()
 
@@ -46,15 +45,19 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 		if (!Array.isArray(cmd) || cmd.length === 0) {
 			return c.json({ error: "Each transaction command must be a non-empty array" }, 400)
 		}
-		const command = String(cmd[0])
-		const args = cmd.slice(1).map(String)
+		let parsed: { command: string; args: string[] }
+		try {
+			parsed = parseCommandArray(cmd)
+		} catch (err) {
+			return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+		}
 		// MULTI/EXEC/DISCARD/WATCH/UNWATCH are nested transaction state — disallow.
 		// Blocking and admin commands disallowed for the same reasons as POST /.
-		const blocked = checkBlockedCommand(command, args)
+		const blocked = checkBlockedCommand(parsed.command, parsed.args)
 		if (blocked) {
 			return c.json({ error: blocked }, 400)
 		}
-		validated.push({ command, args })
+		validated.push(parsed)
 	}
 
 	const useBase64 = c.req.header("upstash-encoding")?.toLowerCase() === "base64"
@@ -78,31 +81,10 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 			return c.json({ error: "EXECABORT Transaction discarded" }, 400)
 		}
 
-		// EXEC returns an array of results, one per queued command
-		const results: Array<{ result?: unknown; error?: string }> = []
-
-		if (Array.isArray(execResult)) {
-			for (const raw of execResult) {
-				// Bun.redis returns Error objects for per-command runtime failures
-				// (e.g., WRONGTYPE) — detect before normalizeResp3 flattens them
-				if (raw instanceof Error) {
-					results.push({ error: raw.message })
-					continue
-				}
-				try {
-					let result = normalizeResp3(raw)
-					if (useBase64) {
-						result = encodeResult(result)
-					}
-					results.push({ result })
-				} catch (err: unknown) {
-					const message = err instanceof Error ? err.message : String(err)
-					results.push({ error: message })
-				}
-			}
-		}
-
-		return c.json(results)
+		// Otherwise EXEC returns an array of per-command results. shapeExecResults
+		// throws on any unexpected (non-array) reply so it surfaces as an error
+		// rather than a misleading silent empty response.
+		return c.json(shapeExecResults(execResult, useBase64))
 	} catch (err: unknown) {
 		const message = err instanceof Error ? err.message : String(err)
 		log.error("multi-exec error", {

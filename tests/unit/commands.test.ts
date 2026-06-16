@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { checkBlockedCommand } from "../../src/commands"
+import { checkBlockedCommand, parseCommandArray } from "../../src/commands"
 
 describe("checkBlockedCommand", () => {
 	// Subscriber mode commands
@@ -133,6 +133,29 @@ describe("checkBlockedCommand", () => {
 		expect(
 			checkBlockedCommand("XREADGROUP", ["GROUP", "g", "c", "BLOCK", "0", "STREAMS", "s", ">"]),
 		).not.toBe(null)
+	})
+
+	// BLOCK detection must only inspect the options section (before STREAMS, and after
+	// the GROUP <group> <consumer> header for XREADGROUP). A stream/group/consumer
+	// literally named BLOCK must not be mistaken for the blocking option.
+	test("XREAD with a stream named BLOCK is allowed", () => {
+		expect(checkBlockedCommand("XREAD", ["COUNT", "10", "STREAMS", "BLOCK", "$"])).toBe(null)
+	})
+
+	test("XREADGROUP with a consumer named BLOCK is allowed", () => {
+		expect(checkBlockedCommand("XREADGROUP", ["GROUP", "g", "BLOCK", "STREAMS", "s", ">"])).toBe(
+			null,
+		)
+	})
+
+	test("XREADGROUP with a group named BLOCK is allowed", () => {
+		expect(checkBlockedCommand("XREADGROUP", ["GROUP", "BLOCK", "c", "STREAMS", "s", ">"])).toBe(
+			null,
+		)
+	})
+
+	test("XREAD with a stream key named STREAMS is allowed", () => {
+		expect(checkBlockedCommand("XREAD", ["STREAMS", "STREAMS", "0"])).toBe(null)
 	})
 
 	// Server admin commands
@@ -332,5 +355,86 @@ describe("checkBlockedCommand", () => {
 	test("SUBSCRIBE hint mentions /subscribe/:channel", () => {
 		const msg = checkBlockedCommand("SUBSCRIBE")
 		expect(msg).toContain("/subscribe/")
+	})
+})
+
+describe("parseCommandArray", () => {
+	test("returns the command and string args", () => {
+		expect(parseCommandArray(["SET", "k", "v"])).toEqual({ command: "SET", args: ["k", "v"] })
+	})
+
+	test("coerces a numeric argument to a string (e.g. EXPIRE key 100)", () => {
+		expect(parseCommandArray(["EXPIRE", "k", 100])).toEqual({
+			command: "EXPIRE",
+			args: ["k", "100"],
+		})
+	})
+
+	test("rejects an object argument instead of coercing to [object Object]", () => {
+		expect(() => parseCommandArray(["SET", "k", { a: 1 }])).toThrow()
+	})
+
+	test("rejects an array argument", () => {
+		expect(() => parseCommandArray(["SET", "k", ["a", "b"]])).toThrow()
+	})
+
+	test("rejects a null argument instead of coercing to the string null", () => {
+		expect(() => parseCommandArray(["SET", "k", null])).toThrow()
+	})
+
+	test("rejects a boolean argument", () => {
+		expect(() => parseCommandArray(["SET", "k", true])).toThrow()
+	})
+
+	test("rejects an empty command array", () => {
+		expect(() => parseCommandArray([])).toThrow()
+	})
+
+	test("rejects a non-string command name", () => {
+		expect(() => parseCommandArray([123, "k"])).toThrow()
+	})
+})
+
+describe("checkBlockedCommand — dangerous + configurable", () => {
+	test("KEYS is blocked by default with a hint about the env var", () => {
+		const msg = checkBlockedCommand("KEYS", ["*"])
+		expect(msg).not.toBe(null)
+		expect(msg).toContain("UPREDIS_ALLOW_DANGEROUS_COMMANDS")
+	})
+
+	test("FLUSHALL is blocked by default", () => {
+		expect(checkBlockedCommand("FLUSHALL")).not.toBe(null)
+	})
+
+	test("FLUSHDB is blocked by default", () => {
+		expect(checkBlockedCommand("FLUSHDB")).not.toBe(null)
+	})
+
+	test("SWAPDB is blocked by default", () => {
+		expect(checkBlockedCommand("SWAPDB", ["0", "1"])).not.toBe(null)
+	})
+
+	test("dangerous command check is case-insensitive", () => {
+		expect(checkBlockedCommand("keys", ["*"])).not.toBe(null)
+	})
+
+	test("KEYS is allowed when allowDangerous is set", () => {
+		expect(checkBlockedCommand("KEYS", ["*"], { allowDangerous: true })).toBe(null)
+	})
+
+	test("FLUSHALL is allowed when allowDangerous is set", () => {
+		expect(checkBlockedCommand("FLUSHALL", [], { allowDangerous: true })).toBe(null)
+	})
+
+	test("extraBlocked blocks an otherwise-allowed command", () => {
+		expect(checkBlockedCommand("GET", ["k"], { extraBlocked: new Set(["GET"]) })).not.toBe(null)
+	})
+
+	test("extraBlocked matches case-insensitively against the uppercased command", () => {
+		expect(checkBlockedCommand("get", ["k"], { extraBlocked: new Set(["GET"]) })).not.toBe(null)
+	})
+
+	test("a normal command is still allowed with default options", () => {
+		expect(checkBlockedCommand("GET", ["k"])).toBe(null)
 	})
 })

@@ -1,6 +1,6 @@
 import type { Context } from "hono"
 import { Hono } from "hono"
-import { checkBlockedCommand } from "../commands"
+import { checkBlockedCommand, parseCommandArray } from "../commands"
 import { log } from "../logger"
 import { getClient } from "../redis"
 import { encodeResult } from "../translate/encoding"
@@ -44,10 +44,15 @@ commandRoutes.post("/", async (c) => {
 		return c.json({ error: "Request body must be a non-empty JSON array" }, 400)
 	}
 
-	const command = String(body[0])
-	const args = body.slice(1).map(String)
+	let parsed: { command: string; args: string[] }
+	try {
+		parsed = parseCommandArray(body)
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err)
+		return c.json({ error: message }, 400)
+	}
 
-	return executeCommand(c, command, args)
+	return executeCommand(c, parsed.command, parsed.args)
 })
 
 async function handlePathCommand(c: Context) {

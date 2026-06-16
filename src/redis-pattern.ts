@@ -29,8 +29,12 @@ export type PatternSubscription = {
 }
 
 const COMMAND_TIMEOUT_MS = 10_000
+// Pattern-subscribe replies (psubscribe confirmation, pmessage) are always shallow
+// arrays. Cap recursion depth defensively so a malformed or hostile reply can't
+// blow the stack.
+const MAX_RESP_DEPTH = 64
 
-class RespParser {
+export class RespParser {
 	private buffer: Buffer = Buffer.alloc(0)
 
 	push(chunk: Buffer): RedisRespValue[] {
@@ -53,8 +57,11 @@ class RespParser {
 		return values
 	}
 
-	private parseAt(offset: number): ParsedValue | undefined {
+	private parseAt(offset: number, depth = 0): ParsedValue | undefined {
 		if (offset >= this.buffer.length) return undefined
+		if (depth > MAX_RESP_DEPTH) {
+			throw new Error(`Redis RESP nesting exceeds maximum depth of ${MAX_RESP_DEPTH}`)
+		}
 
 		const prefix = this.buffer[offset]
 		const line = this.readLine(offset + 1)
@@ -76,7 +83,7 @@ class RespParser {
 			case 36: // $
 				return this.parseBulkString(line)
 			case 42: // *
-				return this.parseArray(line)
+				return this.parseArray(line, depth)
 			default:
 				throw new Error(`Invalid Redis RESP prefix: ${String.fromCharCode(prefix)}`)
 		}
@@ -111,7 +118,10 @@ class RespParser {
 		}
 	}
 
-	private parseArray(line: { text: string; offset: number }): ParsedValue | undefined {
+	private parseArray(
+		line: { text: string; offset: number },
+		depth: number,
+	): ParsedValue | undefined {
 		const length = Number(line.text)
 		if (length === -1) return { value: null, offset: line.offset }
 		if (!Number.isInteger(length) || length < 0) {
@@ -121,7 +131,7 @@ class RespParser {
 		const values: RedisRespValue[] = []
 		let offset = line.offset
 		for (let i = 0; i < length; i++) {
-			const parsed = this.parseAt(offset)
+			const parsed = this.parseAt(offset, depth + 1)
 			if (parsed === undefined) return undefined
 			values.push(parsed.value)
 			offset = parsed.offset
@@ -255,6 +265,11 @@ class RawPatternConnection {
 	private handleData(data: Buffer): void {
 		try {
 			for (const value of this.parser.push(data)) {
+				// Command replies and pubsub pushes share this RESP2 stream (no RESP3
+				// push framing). Routing a reply to the oldest pending command is safe
+				// because commands here are strictly single-flight during setup
+				// (AUTH/SELECT/PSUBSCRIBE) and Redis never delivers a pmessage before
+				// the PSUBSCRIBE confirmation — so a pending reply is never a push.
 				if (this.pending.length > 0) {
 					const pending = this.pending.shift()
 					if (pending) this.resolvePending(pending, value)

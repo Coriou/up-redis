@@ -27,6 +27,29 @@ describe("normalizeResp3", () => {
 		expect(normalizeResp3(-1)).toBe(-1)
 	})
 
+	// Non-finite numbers: JSON.stringify turns Infinity/NaN into null, which would
+	// corrupt ZSCORE / ZADD INCR / ZINCRBY / GEODIST of infinite scores. Map them to
+	// the Redis string forms instead (what real Redis and Upstash return).
+	test("positive infinity becomes the string inf", () => {
+		expect(normalizeResp3(Number.POSITIVE_INFINITY)).toBe("inf")
+	})
+
+	test("negative infinity becomes the string -inf", () => {
+		expect(normalizeResp3(Number.NEGATIVE_INFINITY)).toBe("-inf")
+	})
+
+	test("NaN becomes the string nan", () => {
+		expect(normalizeResp3(Number.NaN)).toBe("nan")
+	})
+
+	test("non-finite numbers inside an array are normalized", () => {
+		expect(normalizeResp3([Number.POSITIVE_INFINITY, 1, Number.NEGATIVE_INFINITY])).toEqual([
+			"inf",
+			1,
+			"-inf",
+		])
+	})
+
 	test("null passes through", () => {
 		expect(normalizeResp3(null)).toBe(null)
 	})

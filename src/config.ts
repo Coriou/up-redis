@@ -23,6 +23,16 @@ const envSchema = z.object({
 	// exhaust connections / file descriptors. Generous default; tune lower
 	// behind a known-trusted reverse proxy.
 	UPREDIS_MAX_SUBSCRIPTIONS: z.coerce.number().int().positive().default(10_000),
+	// Dangerous-but-Upstash-allowed commands (KEYS, FLUSHALL, FLUSHDB, SWAPDB) are
+	// blocked by default; set to "true" to permit them on the shared connection.
+	UPREDIS_ALLOW_DANGEROUS_COMMANDS: z.enum(["true", "false"]).default("false"),
+	// Extra commands to block, comma-separated and case-insensitive (e.g. "DEBUG,KEYS").
+	// Lets operators harden the proxy without code changes.
+	UPREDIS_BLOCKED_COMMANDS: z.string().default(""),
+	// Allow the `_token` query parameter for auth (Upstash compat). It leaks the
+	// secret into reverse-proxy/access logs, so operators can disable it and require
+	// the Authorization header instead.
+	UPREDIS_ALLOW_TOKEN_QUERY_PARAM: z.enum(["true", "false"]).default("true"),
 })
 
 const parsed = envSchema.parse(process.env)
@@ -40,4 +50,45 @@ export const config = {
 	maxBodySize: parsed.UPREDIS_MAX_BODY_SIZE,
 	maxPipelineCommands: parsed.UPREDIS_MAX_PIPELINE_COMMANDS,
 	maxSubscriptions: parsed.UPREDIS_MAX_SUBSCRIPTIONS,
+	allowDangerousCommands: parsed.UPREDIS_ALLOW_DANGEROUS_COMMANDS === "true",
+	blockedCommands: parseCommandList(parsed.UPREDIS_BLOCKED_COMMANDS),
+	allowTokenQueryParam: parsed.UPREDIS_ALLOW_TOKEN_QUERY_PARAM === "true",
+}
+
+/** Parse a comma-separated command list into an uppercased Set. */
+function parseCommandList(value: string): ReadonlySet<string> {
+	return new Set(
+		value
+			.split(",")
+			.map((entry) => entry.trim().toUpperCase())
+			.filter((entry) => entry.length > 0),
+	)
+}
+
+const PLACEHOLDER_TOKENS = new Set([
+	"your-secret-token-here",
+	"changeme",
+	"change-me",
+	"secret",
+	"password",
+	"token",
+	"test",
+])
+
+/**
+ * Assess UPREDIS_TOKEN strength for a startup warning. Returns a human-readable
+ * reason if the token looks weak, or null if it looks acceptable. This only warns
+ * — it never blocks startup, to avoid breaking existing deployments on upgrade.
+ */
+export function assessTokenStrength(token: string): string | null {
+	if (PLACEHOLDER_TOKENS.has(token.toLowerCase())) {
+		return "it matches a well-known placeholder/example value"
+	}
+	if (token.length < 16) {
+		return `it is only ${token.length} character(s) long — use at least 16 random characters`
+	}
+	if (new Set(token).size < 5) {
+		return "it has very low character diversity (looks low-entropy)"
+	}
+	return null
 }

@@ -15,7 +15,9 @@ const expectedHash = createHash("sha256").update(config.token).digest()
  */
 export const authMiddleware: MiddlewareHandler = async (c, next) => {
 	const raw = c.req.header("authorization")
-	const queryToken = c.req.query("_token")
+	// The `_token` query param (Upstash compat) leaks the secret into reverse-proxy
+	// access logs, so it can be disabled via UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false.
+	const queryToken = config.allowTokenQueryParam ? c.req.query("_token") : undefined
 	if (!raw && !queryToken) {
 		throw new HTTPException(401, { message: "Unauthorized" })
 	}
