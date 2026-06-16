@@ -11,15 +11,23 @@ permissions:
 
 jobs:
   compat-latest:
-    name: Test against @upstash/redis@latest
+    name: Test against @upstash/redis@latest (${{ matrix.backend }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: redis:8-alpine
+            health-cmd: redis-cli ping
+          - backend: valkey/valkey:8-alpine
+            health-cmd: valkey-cli ping
     services:
       redis:
-        image: redis:7-alpine
+        image: ${{ matrix.backend }}
         ports:
           - 6379:6379
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "${{ matrix.health-cmd }}"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -69,7 +77,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.sdk.outputs.version }}"
-          TITLE="SDK Compat: @upstash/redis@${VERSION} test failures"
+          TITLE="SDK Compat (${{ matrix.backend }}): @upstash/redis@${VERSION} test failures"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           # Check for existing open issue with same title
