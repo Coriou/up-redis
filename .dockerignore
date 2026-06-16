@@ -1,0 +1,24 @@
+# Build artifacts and deps (the image builds its own)
+node_modules
+dist
+*.tsbuildinfo
+
+# VCS / CI
+.git
+.github
+
+# Tests and coverage (not needed in the runtime image)
+tests
+coverage
+
+# Local secrets and Redis dumps
+.env
+.env.*
+dump.rdb
+
+# Logs and editor/OS junk
+*.log
+.vscode
+.idea
+.DS_Store
+Thumbs.db
