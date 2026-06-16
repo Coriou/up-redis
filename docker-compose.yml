@@ -18,7 +18,7 @@ services:
       retries: 3
 
   redis:
-    image: redis:7-alpine
+    image: ${UPREDIS_REDIS_IMAGE:-redis:8-alpine}
     volumes:
       - redis-data:/data
     healthcheck:
