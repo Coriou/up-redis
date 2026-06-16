@@ -1,0 +1,24 @@
+# Override for running up-redis against an external / managed Redis or Valkey
+# backend (no bundled backend container). Usage:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.external.yml up -d
+#
+# or, equivalently:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.external.yml docker compose up -d
+#
+# Coolify caveat: Coolify does NOT support multi-`-f` overrides for app deploys.
+# On Coolify, the external-backend path is simply setting UPREDIS_REDIS_URL to the
+# managed endpoint in the env UI — not applying this file. See README "Backends".
+#
+# Requires Docker Compose v2.24+ for the `!reset` directive.
+services:
+  up-redis:
+    # No bundled backend to wait for — drop the readiness gate inherited from the base.
+    depends_on: !reset []
+    environment:
+      # Point at your managed/external Redis or Valkey. Required — fail fast if unset.
+      UPREDIS_REDIS_URL: ${UPREDIS_REDIS_URL:?Set UPREDIS_REDIS_URL to your managed Redis/Valkey endpoint}
+
+  # Drop the bundled backend service entirely.
+  redis: !reset null
