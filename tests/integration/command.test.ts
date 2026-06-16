@@ -17,6 +17,25 @@ afterAll(async () => {
 	}
 })
 
+// Runtime capability probe for the newer hash-field read/write-with-expiry commands
+// (HSETEX / HGETEX / HGETDEL). These exist on redis:8 but NOT on redis:7-alpine and
+// NOT on valkey:8 (Valkey 9 has them). Probe once at module load — before any test
+// registers — so that test.skipIf() sees the resolved value. SKIP, never fail, on
+// backends that legitimately lack the command. Detection: the server replies with an
+// error whose message contains "unknown command".
+// Probe key is never written to; nothing to clean up.
+const { data: _probeData } = await api("POST", "/", [
+	"HGETEX",
+	testKey("cmd:probe"),
+	"EX",
+	"1",
+	"FIELDS",
+	"1",
+	"f",
+])
+const _probeErr = (_probeData as { error?: string }).error ?? ""
+const supportsHashExpireGet = !(_probeErr && /unknown command/i.test(_probeErr))
+
 describe("POST / (single command)", () => {
 	// Basic operations
 	test("SET returns OK", async () => {
