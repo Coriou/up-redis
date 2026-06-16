@@ -123,7 +123,7 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 424 tests including 97 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 483 tests including 97 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
@@ -140,13 +140,16 @@ Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/
 | `GET /readyz` | Supported — Kubernetes-style readiness alias for /health |
 | `GET /metrics` | Supported — Prometheus (opt-in) |
 
-Authentication accepts `Authorization: Bearer <token>` and Upstash's `_token=<token>` query parameter. If both are present, the Authorization header takes precedence.
+Authentication accepts `Authorization: Bearer <token>` and Upstash's `_token=<token>` query parameter. If both are present, the Authorization header takes precedence. Query-param auth can be disabled with `UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false` to avoid leaking the token into reverse-proxy access logs (see [Security](#security)).
 
 All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work, with these exceptions blocked at the proxy layer to protect the shared connection:
 
 - **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `SELECT`, `QUIT`, `RESET`
 - **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
 - **Server admin / DoS vectors:** `SHUTDOWN`, `REPLICAOF`/`SLAVEOF`, `FAILOVER`, `DEBUG`, `MONITOR`, `CLIENT KILL`/`PAUSE`/`UNPAUSE`/`REPLY`/`NO-EVICT`/`NO-TOUCH`/`SETNAME`/`SETINFO`/`TRACKING`, `CLUSTER FAILOVER`/`RESET`/`MEET`/`FORGET`/`REPLICATE`/`ADDSLOTS`/`DELSLOTS`/`SETSLOT`
+- **Dangerous by default (configurable):** `KEYS` (O(N) — scans the whole keyspace on the shared connection), `FLUSHALL`, `FLUSHDB`, `SWAPDB` are blocked by default. Set `UPREDIS_ALLOW_DANGEROUS_COMMANDS=true` to permit them. Add your own with `UPREDIS_BLOCKED_COMMANDS`.
+
+Requests are also rejected with `400` if a command argument isn't a string or number (e.g. an object or `null`, which would otherwise be silently coerced to garbage like `"[object Object]"`), or if the `Upstash-Response-Format: resp2` header is sent (up-redis only speaks the JSON envelope).
 
 Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST` remain available, as do read-only `CLUSTER` subcommands like `CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER MYID`, `CLUSTER SLOTS`, `CLUSTER SHARDS`.
 
@@ -162,8 +165,7 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | Request timeout | None | Per-request timeout middleware |
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
-| Docker image | ~100MB | ~50MB (Bun Alpine) |
-| Tests | External | 424 built-in (unit + integration + SDK compat) |
+| Tests | External | 483 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
@@ -174,10 +176,14 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | ZRANGE LIMIT | Works without BYSCORE/BYLEX | Redis requires BYSCORE/BYLEX |
 | RedisJSON | Custom response format | Standard Redis Stack format |
 | PUNSUBSCRIBE/UNSUBSCRIBE REST endpoints | Stream command endpoints | SDK `unsubscribe()` aborts the SSE stream; direct endpoints are not exposed |
-| MONITOR SSE | `POST /monitor` | Not yet supported; use `redis-cli monitor` directly |
-| RESP2 response format | `Upstash-Response-Format: resp2` | Not yet supported; JSON responses are supported |
+| MONITOR SSE | `POST /monitor` | Not supported; use `redis-cli monitor` directly |
+| RESP2 response format | `Upstash-Response-Format: resp2` | Rejected with `400` — up-redis only speaks the JSON envelope (the SDK's default) |
 | Rate limiting | Built-in | Use reverse proxy (nginx, Caddy) |
 | Multi-region | Built-in | Single-region by design |
+
+### Versioning & SDK compatibility
+
+up-redis tracks the current `@upstash/redis` SDK (pinned to `1.38.x` in this repo) and the documented Upstash REST contract. A weekly CI job runs the full SDK compatibility suite against `@upstash/redis@latest` and opens an issue automatically on any drift, so incompatibilities surface quickly. Any standard Redis 6+ server works as the backend; module commands (RedisJSON `JSON.*`, Search `FT.*`) are passed through transparently but only work if your Redis has the corresponding module loaded.
 
 ## When to Use This
 
@@ -199,7 +205,7 @@ All environment variables are prefixed `UPREDIS_`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UPREDIS_TOKEN` | — | **Required.** Bearer token for API authentication |
-| `UPREDIS_REDIS_URL` | `redis://localhost:6379` | Redis connection URL (any Redis 6+, Valkey, KeyDB) |
+| `UPREDIS_REDIS_URL` | `redis://localhost:6379` | Redis connection URL — `redis://`, `rediss://` (TLS), `valkey://`, `valkeys://` (any Redis 6+, Valkey, KeyDB) |
 | `UPREDIS_PORT` | `8080` | HTTP listen port |
 | `UPREDIS_HOST` | `0.0.0.0` | HTTP listen host |
 | `UPREDIS_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
@@ -210,6 +216,20 @@ All environment variables are prefixed `UPREDIS_`:
 | `UPREDIS_MAX_PIPELINE_COMMANDS` | `1000` | Max commands per `/pipeline` or `/multi-exec` request |
 | `UPREDIS_MAX_SUBSCRIPTIONS` | `10000` | Max concurrent SSE `/subscribe/:channel` connections (each holds a dedicated Redis connection) |
 | `UPREDIS_METRICS` | `false` | Enable Prometheus metrics at `GET /metrics` |
+| `UPREDIS_ALLOW_DANGEROUS_COMMANDS` | `false` | Permit `KEYS`, `FLUSHALL`, `FLUSHDB`, `SWAPDB` (blocked by default — they can block the shared connection or destroy data) |
+| `UPREDIS_BLOCKED_COMMANDS` | — | Extra commands to block, comma-separated and case-insensitive (e.g. `DEBUG,KEYS`) |
+| `UPREDIS_ALLOW_TOKEN_QUERY_PARAM` | `true` | Allow `?_token=` query-param auth. Set `false` to require the `Authorization` header (avoids leaking the token into proxy logs) |
+
+## Security
+
+up-redis is designed to run behind a reverse proxy (Coolify, Traefik, nginx, Caddy) on a private network:
+
+- **Transport:** up-redis serves plain HTTP. **Terminate TLS at your reverse proxy** — don't expose the port directly to the internet. The production `docker-compose.yml` uses Docker `expose` (network-internal) rather than `ports` for exactly this reason.
+- **Authentication:** the bearer token is compared in constant time (SHA-256 + `timingSafeEqual`, which also hides the token length). A startup warning fires if `UPREDIS_TOKEN` is short, low-entropy, or a known placeholder — use a long random secret, e.g. `openssl rand -hex 32`.
+- **Token in URLs:** the `?_token=` query parameter (Upstash compat) is convenient but leaks the secret into reverse-proxy/access logs and browser history. Prefer the `Authorization` header, and set `UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false` to reject query-param auth entirely.
+- **`/metrics` is unauthenticated** (so Prometheus can scrape it). Only enable it (`UPREDIS_METRICS=true`) when the port is reachable solely by your monitoring stack, or restrict `/metrics` at the reverse proxy.
+- **Command surface:** destructive/DoS-prone commands (`KEYS`, `FLUSHALL`, `FLUSHDB`, `SWAPDB`) are blocked by default; harden further with `UPREDIS_BLOCKED_COMMANDS`. For defense in depth, also restrict commands with [Redis ACLs](https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/) on the backing server.
+- **Resource limits:** request body size (`UPREDIS_MAX_BODY_SIZE`), pipeline/transaction length (`UPREDIS_MAX_PIPELINE_COMMANDS`), and concurrent SSE subscriptions (`UPREDIS_MAX_SUBSCRIPTIONS`) are all bounded to limit abuse of the shared connection.
 
 ## Health & Monitoring
 
@@ -235,7 +255,20 @@ curl http://localhost:8080/readyz
 # → {"status":"ready","redis":"connected"} or {"status":"not_ready",...} (503)
 ```
 
-**Liveness vs readiness:** `/livez` returns 200 as long as the process can respond. `/health` and `/readyz` return 503 when Redis is unreachable. Configure Kubernetes `livenessProbe` against `/livez` and `readinessProbe` against `/health` so a transient Redis outage doesn't cause unnecessary pod restarts.
+**Liveness vs readiness:** `/livez` returns 200 as long as the process can respond. `/health` and `/readyz` return 503 when Redis is unreachable. Configure Kubernetes `livenessProbe` against `/livez` and `readinessProbe` against `/health` so a transient Redis outage doesn't cause unnecessary pod restarts:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: 8080
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  periodSeconds: 10
+```
 
 **Prometheus metrics** — enable with `UPREDIS_METRICS=true`:
 
@@ -275,12 +308,12 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-424 tests across three tiers:
+483 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 175 | RESP3 normalization, base64 encoding, SSE event formatting, blocked command checks |
-| **Integration** | 152 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
+| **Unit** | 218 | RESP3 normalization (incl. ±inf/nan), base64 encoding, SSE event ordering, blocked/dangerous command checks, arg validation, token strength |
+| **Integration** | 168 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
 | **SDK Compatibility** | 97 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash

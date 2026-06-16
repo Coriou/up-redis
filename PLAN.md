@@ -1,5 +1,7 @@
 # up-redis — Implementation Plan
 
+> **Note:** This is the historical pre-implementation design document. The shipped feature set has since grown beyond it. For current behavior, configuration, and endpoints, **`README.md` and `CLAUDE.md` are the source of truth.**
+
 A self-hosted, Upstash Redis-compatible HTTP proxy backed by any standard Redis server. Drop-in replacement for `@upstash/redis` — point the SDK at your own server instead of Upstash's cloud.
 
 Modern rewrite of [SRH](https://github.com/hiett/serverless-redis-http) (serverless-redis-http) using the same architecture and conventions as [up-vector](https://github.com/Coriou/up-vector).
@@ -818,7 +820,7 @@ jobs:
 |--------|---------|----------|--------|
 | Read-your-writes | Multi-region sync tokens | Stable token echoed | Single-region Redis already provides local read-after-write consistency; no cross-region waiting. |
 | URL-path encoding | `GET /set/key/value` | Supported | Also supports POST/PUT path commands with raw body appended as value. |
-| Pub/Sub SSE | `POST /subscribe/{channel}` | Supported | Pattern subscribe still not supported by Bun.redis. |
+| Pub/Sub SSE | `POST /subscribe/{channel}` | Supported | Pattern subscribe is also implemented (`/psubscribe`) via a custom RESP connection (`src/redis-pattern.ts`), since Bun.redis doesn't support `PSUBSCRIBE`. |
 | RedisJSON | Upstash-specific response format | Standard Redis Stack format | Some JSON commands may behave differently. |
 | Read-only tokens | ACL-based restrictions | Not supported | Single token with full access. |
 | Rate limiting | Built-in | Not built-in | Use reverse proxy (nginx, Caddy) if needed. |
