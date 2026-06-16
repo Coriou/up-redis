@@ -426,7 +426,8 @@ a planned follow-up.
 **Managed-provider foot-guns** (the real failure modes):
 
 - **Non-standard ports** (the #1 foot-gun): Azure Cache `6380` (TLS) / `10000`, GCP `6378`, and
-  Redis Cloud / Aiven assign per-instance high ports. The port is part of `UPREDIS_REDIS_URL` —
+  Redis Cloud / Aiven assign per-instance high ports. (GCP uses `6378` only when in-transit
+  encryption is on; `6379` otherwise.) The port is part of `UPREDIS_REDIS_URL` —
   get it from the provider console; don't assume `6379`.
 - **Cluster endpoints** (MemoryDB, ElastiCache cluster-mode) and **IAM / Entra auth** cannot be
   expressed in a static URL on a non-cluster client — these are unsupported in this configuration.
