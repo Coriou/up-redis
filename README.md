@@ -123,7 +123,7 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 483 tests including 97 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 486 tests including 97 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
@@ -165,7 +165,7 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | Request timeout | None | Per-request timeout middleware |
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
-| Tests | External | 483 built-in (unit + integration + SDK compat) |
+| Tests | External | 486 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
@@ -308,12 +308,12 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-483 tests across three tiers:
+486 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
 | **Unit** | 218 | RESP3 normalization (incl. ±inf/nan), base64 encoding, SSE event ordering, blocked/dangerous command checks, arg validation, token strength |
-| **Integration** | 168 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
+| **Integration** | 171 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) |
 | **SDK Compatibility** | 97 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
