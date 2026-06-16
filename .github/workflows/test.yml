@@ -32,16 +32,26 @@ jobs:
           UPREDIS_TOKEN: test
 
   integration:
-    name: Integration + Compatibility
+    name: Integration + Compatibility (${{ matrix.backend }})
     runs-on: ubuntu-latest
     needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: redis:7-alpine
+            health-cmd: redis-cli ping
+          - backend: redis:8-alpine
+            health-cmd: redis-cli ping
+          - backend: valkey/valkey:8-alpine
+            health-cmd: valkey-cli ping
     services:
       redis:
-        image: redis:7-alpine
+        image: ${{ matrix.backend }}
         ports:
           - 6379:6379
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "${{ matrix.health-cmd }}"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
