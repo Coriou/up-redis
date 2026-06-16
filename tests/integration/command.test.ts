@@ -18,8 +18,8 @@ afterAll(async () => {
 })
 
 // Runtime capability probe for the newer hash-field read/write-with-expiry commands
-// (HSETEX / HGETEX / HGETDEL). These exist on redis:8 but NOT on redis:7-alpine and
-// NOT on valkey:8 (Valkey 9 has them). Probe once at module load — before any test
+// (HSETEX / HGETEX / HGETDEL). These exist on Redis 8+ and Valkey 9+ but NOT on
+// redis:7-alpine or Valkey 8. Probe once at module load — before any test
 // registers — so that test.skipIf() sees the resolved value. SKIP, never fail, on
 // backends that legitimately lack the command. Detection: the server replies with an
 // error whose message contains "unknown command".
@@ -195,9 +195,9 @@ describe("POST / (single command)", () => {
 		expect(result[0]).toBeLessThanOrEqual(100)
 	})
 
-	// HSETEX / HGETEX / HGETDEL exist on redis:8 but not on redis:7-alpine or
-	// valkey:8 (Valkey 9 has them), so they are guarded by the runtime probe above:
-	// they RUN on redis:8 and report as SKIPPED elsewhere — never a hard failure.
+	// HSETEX / HGETEX / HGETDEL exist on Redis 8+ and Valkey 9+ but not on
+	// redis:7-alpine or Valkey 8, so they are guarded by the runtime probe above:
+	// they RUN where supported and report as SKIPPED elsewhere — never a hard failure.
 	// Argument grammar (verified against redis:8-alpine): the expiry/action option
 	// (EX/PX/EXAT/PXAT/KEEPTTL/PERSIST) precedes the FIELDS block.
 	test.skipIf(!supportsHashExpireGet)("HSETEX sets a field with an expiry", async () => {

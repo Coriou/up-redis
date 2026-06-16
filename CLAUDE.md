@@ -221,7 +221,7 @@ All prefixed `UPREDIS_`:
 | -------------------------- | ------------------------ | -------- | ---------------------------------------------- |
 | `UPREDIS_TOKEN`            | -                        | **Yes**  | Bearer token for API auth                      |
 | `UPREDIS_REDIS_URL`        | `redis://localhost:6379` | No       | Redis connection (any Redis 6+ / Valkey / KeyDB) |
-| `UPREDIS_REDIS_IMAGE`      | `redis:8-alpine`         | No       | Bundled backend image for `docker-compose.yml` — compose-only, NOT read by the app (e.g. `redis:7-alpine`, `valkey/valkey:8-alpine`) |
+| `UPREDIS_REDIS_IMAGE`      | `redis:8-alpine`         | No       | Bundled backend image for `docker-compose.yml` — compose-only, NOT read by the app (e.g. `redis:7-alpine`, `valkey/valkey:9-alpine`) |
 | `UPREDIS_PORT`             | `8080`                   | No       | HTTP listen port                               |
 | `UPREDIS_HOST`             | `0.0.0.0`                | No       | HTTP listen host                               |
 | `UPREDIS_LOG_LEVEL`        | `info`                   | No       | `debug`, `info`, `warn`, `error`               |

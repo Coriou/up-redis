@@ -43,7 +43,7 @@ jobs:
             health-cmd: redis-cli ping
           - backend: redis:8-alpine
             health-cmd: redis-cli ping
-          - backend: valkey/valkey:8-alpine
+          - backend: valkey/valkey:9-alpine
             health-cmd: valkey-cli ping
     services:
       redis:

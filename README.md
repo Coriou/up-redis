@@ -367,14 +367,14 @@ different one by setting `UPREDIS_REDIS_IMAGE` (in `.env` locally, or Coolify's 
 | ---------------------------- | ---------------- | ---------------------------------------------- |
 | `redis:8-alpine` (default)   | Redis 8          | Core + Vector Sets only (no JSON/FT/TS/Bloom)  |
 | `redis:7-alpine`             | Redis 7          | Previous default; the CI baseline gate         |
-| `valkey/valkey:8-alpine`     | Valkey 8         | BSD-licensed; no AGPL; no JSON/FT in base      |
+| `valkey/valkey:9-alpine`     | Valkey 9         | BSD-licensed; no AGPL; no JSON/FT in base      |
 | `redis/redis-stack-server`   | Redis + modules  | Debian, large image; JSON/FT/TS/Bloom          |
 | `valkey/valkey-bundle`       | Valkey + modules | BSD; JSON/FT etc.                              |
 
 The **minimum supported backend is still Redis 6+** — bumping the default to Redis 8 is a
 convenience, not a floor change. Redis 7 remains a first-class, CI-gated option.
 
-CI runs the integration + SDK-compatibility suites against Redis 7, Redis 8, and Valkey 8 (all
+CI runs the integration + SDK-compatibility suites against Redis 7, Redis 8, and Valkey 9 (all
 required to merge). Module backends (`redis/redis-stack-server`, `valkey/valkey-bundle`) are
 **not** CI-tested — the core variants stay module-free.
 
@@ -438,8 +438,8 @@ up-redis is and remains **MIT**. Redis 8 is **AGPLv3**, but **there is no licens
 up-redis is a separate process that talks to Redis as a network client over a socket (per the FSF
 GPL FAQ on aggregation / separate programs), so running up-redis against an AGPL Redis does not
 make up-redis AGPL. For organizations that blanket-ban AGPL regardless, **Valkey
-(`valkey/valkey:8-alpine`, BSD-3-Clause) is the drop-in escape hatch** — set
-`UPREDIS_REDIS_IMAGE=valkey/valkey:8-alpine`.
+(`valkey/valkey:9-alpine`, BSD-3-Clause) is the drop-in escape hatch** — set
+`UPREDIS_REDIS_IMAGE=valkey/valkey:9-alpine`.
 
 **Modules:** `JSON.*` / `FT.*` / `TS.*` / Bloom commands only work if your backend has the
 corresponding module loaded. The official **`redis:8-alpine` bundles only Vector Sets**
