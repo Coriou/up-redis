@@ -356,6 +356,96 @@ services:
       UPVECTOR_REDIS_URL: redis://redis-stack:6379
 ```
 
+### Backends
+
+up-redis is backend-agnostic: it forwards Redis commands transparently and speaks the
+RESP-version-independent JSON envelope, so it runs against any Redis 6+ server, Valkey, or
+KeyDB. The bundled backend in `docker-compose.yml` defaults to **`redis:8-alpine`**; select a
+different one by setting `UPREDIS_REDIS_IMAGE` (in `.env` locally, or Coolify's env UI).
+
+| `UPREDIS_REDIS_IMAGE`        | Backend          | Notes                                          |
+| ---------------------------- | ---------------- | ---------------------------------------------- |
+| `redis:8-alpine` (default)   | Redis 8          | Core + Vector Sets only (no JSON/FT/TS/Bloom)  |
+| `redis:7-alpine`             | Redis 7          | Previous default; the CI baseline gate         |
+| `valkey/valkey:8-alpine`     | Valkey 8         | BSD-licensed; no AGPL; no JSON/FT in base      |
+| `redis/redis-stack-server`   | Redis + modules  | Debian, large image; JSON/FT/TS/Bloom          |
+| `valkey/valkey-bundle`       | Valkey + modules | BSD; JSON/FT etc.                              |
+
+The **minimum supported backend is still Redis 6+** — bumping the default to Redis 8 is a
+convenience, not a floor change. Redis 7 remains a first-class, CI-gated option.
+
+CI runs the integration + SDK-compatibility suites against Redis 7, Redis 8, and Valkey 8 (all
+required to merge). Module backends (`redis/redis-stack-server`, `valkey/valkey-bundle`) are
+**not** CI-tested — the core variants stay module-free.
+
+### Upgrade
+
+The default bundled backend moved from `redis:7-alpine` to `redis:8-alpine`. **This changes the
+live data path on an existing production deploy**, so upgrade deliberately:
+
+1. **In-place upgrade is safe.** Redis 8 loads Redis 7.x RDB/AOF (forward-compatible), so the
+   existing `redis-data` named volume upgrades in place — no dump/restore needed.
+2. **Snapshot first anyway.** Take a backup before pulling the new image (e.g. `BGSAVE`, copy the
+   RDB file, or snapshot the volume) — standard upgrade hygiene.
+3. **It is fully reversible.** To roll back to Redis 7, set `UPREDIS_REDIS_IMAGE=redis:7-alpine`
+   in Coolify's env UI (or `.env`) and redeploy. Reversibility holds because Redis 7 → 8 is
+   forward-compatible at the persistence layer for ordinary keyspaces; an operator who has begun
+   using Redis-8-only features should not expect a clean downgrade.
+
+The **floor is unchanged**: Redis 6+ is still supported.
+
+### Coolify
+
+- `UPREDIS_REDIS_IMAGE` and `UPREDIS_REDIS_URL` are **runtime** (not Build) variables; they
+  auto-surface in Coolify's env UI pre-filled with their defaults.
+- For URLs containing `$` (e.g. some managed-provider passwords), flag the **"Is Literal?"**
+  toggle so Coolify does not interpolate them.
+- Compose `profiles` are not usable on Coolify (bug #6395), and multi-`-f` overrides are not
+  supported for app deploys. On Coolify, the external-backend path is to set `UPREDIS_REDIS_URL`
+  to your managed endpoint in the env UI — **not** to apply `docker-compose.external.yml`.
+
+### Bring your own backend (external / managed)
+
+To point up-redis at an external or managed Redis/Valkey instead of the bundled container, use the
+external override locally:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.external.yml up -d
+# or, equivalently:
+COMPOSE_FILE=docker-compose.yml:docker-compose.external.yml docker compose up -d
+```
+
+and set `UPREDIS_REDIS_URL` to your endpoint (the override requires it and fails fast if unset).
+
+**TLS:** bare `rediss://` / `valkeys://` verifies out of the box against Bun's bundled CAs for
+Upstash, ElastiCache, MemoryDB, Azure Cache, Redis Cloud, and current Aiven. `rediss://` requires
+Bun ≥ 1.2.22 (up-redis ships 1.3.6). **Known limitation:** **private-CA backends** (e.g. GCP
+Memorystore, a self-hosted private CA) are not yet supported — a `UPREDIS_REDIS_CA_FILE` option is
+a planned follow-up.
+
+**Managed-provider foot-guns** (the real failure modes):
+
+- **Non-standard ports** (the #1 foot-gun): Azure Cache `6380` (TLS) / `10000`, GCP `6378`, and
+  Redis Cloud / Aiven assign per-instance high ports. The port is part of `UPREDIS_REDIS_URL` —
+  get it from the provider console; don't assume `6379`.
+- **Cluster endpoints** (MemoryDB, ElastiCache cluster-mode) and **IAM / Entra auth** cannot be
+  expressed in a static URL on a non-cluster client — these are unsupported in this configuration.
+
+### License & modules
+
+up-redis is and remains **MIT**. Redis 8 is **AGPLv3**, but **there is no license contamination**:
+up-redis is a separate process that talks to Redis as a network client over a socket (per the FSF
+GPL FAQ on aggregation / separate programs), so running up-redis against an AGPL Redis does not
+make up-redis AGPL. For organizations that blanket-ban AGPL regardless, **Valkey
+(`valkey/valkey:8-alpine`, BSD-3-Clause) is the drop-in escape hatch** — set
+`UPREDIS_REDIS_IMAGE=valkey/valkey:8-alpine`.
+
+**Modules:** `JSON.*` / `FT.*` / `TS.*` / Bloom commands only work if your backend has the
+corresponding module loaded. The official **`redis:8-alpine` bundles only Vector Sets**
+(`VADD`/`VSIM`) in core — **not** JSON / Search / TimeSeries / Bloom. For those, use
+`redis/redis-stack-server` (Debian, large) or `valkey/valkey-bundle` via `UPREDIS_REDIS_IMAGE`.
+Module backends are not CI-tested.
+
 ## License
 
 MIT
