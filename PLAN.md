@@ -77,7 +77,7 @@ SRH has ~500 lines of core logic. up-redis will have similar core complexity (~4
 | Linting/Format | Biome | v2 | Fast, modern, replaces ESLint+Prettier |
 | Testing | Bun test | built-in | Fast, Jest-compatible API |
 | Container | Bun Alpine | oven/bun:alpine | Minimal image size (~50MB) |
-| Redis backend | Any Redis 6+ | 6.0+ | Standard Redis, Valkey, KeyDB, Redis Stack — all work |
+| Redis backend | Any Redis 6+ | 6.0+ | Standard Redis (default `redis:8-alpine` — core + Vector Sets only), Valkey, KeyDB; JSON/Search need Redis Stack or valkey-bundle |
 
 ---
 
@@ -454,7 +454,7 @@ Set up the project exactly like up-vector: same tooling, same quality controls, 
 - [ ] `.gitignore` — node_modules, dist, .env*.local, coverage
 - [ ] `.env.example` — all env vars with comments
 - [ ] `Dockerfile` — multi-stage build (builder + runtime), oven/bun:alpine, healthcheck
-- [ ] `docker-compose.yml` — up-redis + Redis 7 (not Redis Stack — plain Redis is enough)
+- [ ] `docker-compose.yml` — up-redis + selectable backend via `${UPREDIS_REDIS_IMAGE:-redis:8-alpine}` (plain Redis is enough for core; Stack/bundle only for modules)
 - [ ] `docker-compose.dev.yml` — watch mode, debug logs, exposed Redis port
 - [ ] `.github/workflows/test.yml` — unit + integration + compat on push/PR
 - [ ] `.github/workflows/compat.yml` — weekly SDK compat with auto-issue on failure
@@ -630,7 +630,7 @@ volumes:
   redis-data:
 ```
 
-Note: `redis:7-alpine` instead of `redis/redis-stack-server`. Plain Redis is all we need.
+Note: the bundled backend defaults to `redis:8-alpine` (selectable via `UPREDIS_REDIS_IMAGE`) instead of `redis/redis-stack-server`. Plain Redis is all we need for core; modules (JSON/Search/etc.) require Redis Stack or valkey-bundle.
 
 ### docker-compose.dev.yml (development)
 
