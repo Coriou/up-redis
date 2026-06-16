@@ -195,6 +195,45 @@ describe("POST / (single command)", () => {
 		expect(result[0]).toBeLessThanOrEqual(100)
 	})
 
+	// HSETEX / HGETEX / HGETDEL exist on redis:8 but not on redis:7-alpine or
+	// valkey:8 (Valkey 9 has them), so they are guarded by the runtime probe above:
+	// they RUN on redis:8 and report as SKIPPED elsewhere — never a hard failure.
+	// Argument grammar (verified against redis:8-alpine): the expiry/action option
+	// (EX/PX/EXAT/PXAT/KEEPTTL/PERSIST) precedes the FIELDS block.
+	test.skipIf(!supportsHashExpireGet)("HSETEX sets a field with an expiry", async () => {
+		const key = k()
+		const result = await cmd("HSETEX", key, "EX", "100", "FIELDS", "1", "f1", "v1")
+		expect(result).toBe(1)
+		expect(await cmd("HGET", key, "f1")).toBe("v1")
+		const ttl = (await cmd("HTTL", key, "FIELDS", "1", "f1")) as number[]
+		expect(ttl[0]).toBeGreaterThan(0)
+		expect(ttl[0]).toBeLessThanOrEqual(100)
+	})
+
+	test.skipIf(!supportsHashExpireGet)(
+		"HGETEX reads a field and round-trips the value",
+		async () => {
+			const key = k()
+			await cmd("HSET", key, "f1", "v1")
+			const result = await cmd("HGETEX", key, "EX", "200", "FIELDS", "1", "f1")
+			expect(result).toEqual(["v1"])
+			const ttl = (await cmd("HTTL", key, "FIELDS", "1", "f1")) as number[]
+			expect(ttl[0]).toBeGreaterThan(0)
+			expect(ttl[0]).toBeLessThanOrEqual(200)
+		},
+	)
+
+	test.skipIf(!supportsHashExpireGet)(
+		"HGETDEL returns the value and deletes the field",
+		async () => {
+			const key = k()
+			await cmd("HSET", key, "f1", "v1")
+			const result = await cmd("HGETDEL", key, "FIELDS", "1", "f1")
+			expect(result).toEqual(["v1"])
+			expect(await cmd("HGET", key, "f1")).toBe(null)
+		},
+	)
+
 	// Array responses
 	test("MGET returns array with values and nulls", async () => {
 		const k1 = k()
