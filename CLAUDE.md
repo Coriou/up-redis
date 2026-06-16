@@ -13,7 +13,7 @@ Modern rewrite of [SRH](https://github.com/hiett/serverless-redis-http), sibling
 - **Validation:** Zod v4
 - **Linting/Format:** Biome v2
 - **Testing:** `bun test` (built-in, Jest-compatible)
-- **Container:** Docker (oven/bun:alpine) + Redis 7
+- **Container:** Docker (oven/bun:alpine) + selectable backend (default `redis:8-alpine`, via `UPREDIS_REDIS_IMAGE`; Redis 6+ floor unchanged)
 
 **Not a Next.js/Vercel project.** Pure backend service.
 
@@ -220,7 +220,8 @@ All prefixed `UPREDIS_`:
 | Variable                   | Default                  | Required | Purpose                                        |
 | -------------------------- | ------------------------ | -------- | ---------------------------------------------- |
 | `UPREDIS_TOKEN`            | -                        | **Yes**  | Bearer token for API auth                      |
-| `UPREDIS_REDIS_URL`        | `redis://localhost:6379` | No       | Redis connection                               |
+| `UPREDIS_REDIS_URL`        | `redis://localhost:6379` | No       | Redis connection (any Redis 6+ / Valkey / KeyDB) |
+| `UPREDIS_REDIS_IMAGE`      | `redis:8-alpine`         | No       | Bundled backend image for `docker-compose.yml` — compose-only, NOT read by the app (e.g. `redis:7-alpine`, `valkey/valkey:8-alpine`) |
 | `UPREDIS_PORT`             | `8080`                   | No       | HTTP listen port                               |
 | `UPREDIS_HOST`             | `0.0.0.0`                | No       | HTTP listen host                               |
 | `UPREDIS_LOG_LEVEL`        | `info`                   | No       | `debug`, `info`, `warn`, `error`               |
@@ -248,12 +249,12 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-483 tests across three tiers:
+486 tests across three tiers:
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Unit**              | 218   | RESP3 normalization (incl. ±inf/nan), base64 encoding, SSE event formatting + ordering, arg validation, blocked-command / dangerous-command / config checks, token-strength       |
-| **Integration**       | 168   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health, auth, blocked commands)                   |
+| **Integration**       | 171   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health, auth, blocked commands)                   |
 | **SDK Compatibility** | 97    | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
