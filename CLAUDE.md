@@ -7,7 +7,7 @@ Modern rewrite of [SRH](https://github.com/hiett/serverless-redis-http), sibling
 
 ## Tech Stack
 
-- **Runtime:** Bun 1.2+ (native TypeScript)
+- **Runtime:** Bun 1.2+ floor (native TypeScript); CI and the Docker image pin 1.3.6
 - **HTTP:** Hono v4
 - **Redis client:** `Bun.redis` (native, RESP3, auto-pipelining, zero-dep)
 - **Validation:** Zod v4
@@ -130,16 +130,19 @@ String/Number/Null → pass through
 
 Non-finite handling matters because Bun.redis returns JS `Infinity` for e.g. `ZSCORE` of an infinite score, and `JSON.stringify(Infinity)` would otherwise silently become `null`. `normalizeResp3` emits the Redis string forms (`"inf"`/`"-inf"`/`"nan"`) that real Redis and Upstash return.
 
-The enumerated map-returning command list below is illustrative — `normalizeResp3` is generic and handles any object, so commands like `HGETALL`, `CONFIG GET`, `XRANGE`, `XREVRANGE`, `XREAD`, `CLIENT INFO`, `COMMAND INFO`, and hash-field-TTL commands (`HEXPIRE`, `HTTL`) are all normalized uniformly without command-specific logic.
+The enumerated map-returning command list below is illustrative — `normalizeResp3` is generic and handles any object, so commands like `HGETALL`, `CONFIG GET`, `XRANGE`, `XREVRANGE`, `XREAD`, `CLIENT INFO`, `COMMAND INFO`, and hash-field-TTL commands (`HEXPIRE`, `HTTL`) are all normalized uniformly without command-specific logic. `normalizeResp3` also caps recursion depth (64) so a pathologically nested reply (e.g. from `EVAL`) throws instead of overflowing the stack.
+
+**WITHSCORES/WITHVALUES flattening (`src/translate/score-pairs.ts`):** RESP3 returns `ZRANGE … WITHSCORES`, `ZPOPMIN/MAX` (with count), `ZRANDMEMBER/ZUNION/ZINTER/ZDIFF … WITHSCORES`, and `HRANDFIELD … WITHVALUES` as an array of `[member, score]` 2-tuples, but the SDK and Upstash REST expect a single flat `[member, score, …]` array (their deserializers step through the reply in twos). `normalizeResp3` can't tell pair-lists from legitimately-nested replies (`GEOPOS` → `[[lon,lat]]`, `XRANGE` → `[[id,[f,v]]]`), so `flattenScorePairs(command, args, value)` flattens **only** for that specific command+option set. It runs after `normalizeResp3` on the single-command, pipeline, and multi-exec paths.
 
 ### Base64 Encoding Rules
 
 When `Upstash-Encoding: base64` header is present:
 
-- **Strings:** base64-encode (including "OK", "QUEUED" — SDK handles both)
+- **Strings:** base64-encode (including "QUEUED")
+- **Literal "OK":** depth-aware. The SDK's `decode()` passes "OK" through unencoded only at EVEN nesting depths (top-level scalar + elements reached via its recursive `decode()`); at ODD depths (direct array children) it base64-decodes unconditionally. So `encodeResult(value, depth)` leaves "OK" literal only at even depths and encodes it at odd depths — otherwise a stored "OK" read back via `LRANGE`/`MGET`/etc. decodes to garbage ("8").
 - **Numbers:** never encode (must be JSON number)
 - **Null:** never encode (must be JSON null)
-- **Arrays:** recursively encode each element
+- **Arrays:** recursively encode each element (incrementing depth)
 - **Error strings:** never encode (lives in `error` field, not `result`)
 
 ### Transaction Design (MULTI/EXEC)
@@ -190,6 +193,7 @@ src/
   types.ts              # Shared types
   util/
     timeout.ts          # withTimeout() helper (bounds health/runtime PING)
+    slot-limiter.ts     # createSlotLimiter(): synchronous counting cap (subscription TOCTOU-safe)
   middleware/
     auth.ts             # Bearer token validation
     error-handler.ts    # Global error → { error, status } envelope
@@ -203,8 +207,9 @@ src/
     multi-exec.ts       # POST /multi-exec (transactional execution)
     pubsub.ts           # GET/POST /subscribe/:channel (SSE streaming)
   translate/
-    response.ts         # normalizeResp3(): Map → flat array, Boolean → 0/1
-    encoding.ts         # encodeResult(): recursive base64 encoding
+    response.ts         # normalizeResp3(): Map → flat array, Boolean → 0/1 (depth-capped)
+    score-pairs.ts      # flattenScorePairs(): RESP3 WITHSCORES/WITHVALUES pairs → RESP2-flat
+    encoding.ts         # encodeResult(): recursive, depth-aware base64 encoding
     transaction.ts      # EXEC result shaping (MULTI/EXEC)
     pubsub.ts           # SSE event formatting (subscribe confirmation, message events)
 tests/
@@ -249,13 +254,13 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-486 tests across three tiers:
+550 tests across three tiers:
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unit**              | 218   | RESP3 normalization (incl. ±inf/nan), base64 encoding, SSE event formatting + ordering, arg validation, blocked-command / dangerous-command / config checks, token-strength       |
-| **Integration**       | 171   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress tests, edge cases, health, auth, blocked commands)                   |
-| **SDK Compatibility** | 97    | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class) |
+| **Unit**              | 272   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening, base64 encoding (incl. depth-aware "OK"), SSE ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation, blocked/dangerous/config checks, token-strength |
+| **Integration**       | 177   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles). 3 skip on Redis < 7.4 (HSETEX/HGETEX/HGETDEL). A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
+| **SDK Compatibility** | 101   | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class, withscores/withvalues shape, literal-"OK" fidelity) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
 

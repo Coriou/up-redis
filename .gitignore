@@ -22,3 +22,7 @@ dump.rdb
 # OS
 .DS_Store
 Thumbs.db
+
+# Internal brainstorm-pipeline artifacts (spec/plan scratch). The curated public
+# design doc is PLAN.md; these are kept local to avoid accidental commits.
+docs/superpowers/
