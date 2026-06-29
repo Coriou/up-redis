@@ -84,7 +84,7 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 		// Otherwise EXEC returns an array of per-command results. shapeExecResults
 		// throws on any unexpected (non-array) reply so it surfaces as an error
 		// rather than a misleading silent empty response.
-		return c.json(shapeExecResults(execResult, useBase64))
+		return c.json(shapeExecResults(execResult, useBase64, validated))
 	} catch (err: unknown) {
 		const message = err instanceof Error ? err.message : String(err)
 		log.error("multi-exec error", {

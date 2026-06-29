@@ -168,15 +168,12 @@ describe("SDK: sorted set advanced", () => {
 		expect(score).toBe(1) // a unchanged
 	})
 
-	test("zrange with scores returns member-score tuples", async () => {
+	test("zrange with scores returns a flat [member, score, ...] array", async () => {
 		const key = k()
 		await redis.zadd(key, { score: 10, member: "a" }, { score: 20, member: "b" })
 		const result = await redis.zrange(key, 0, -1, { withScores: true })
-		// SDK returns [[member, score], ...] tuples
-		expect(result).toEqual([
-			["a", 10],
-			["b", 20],
-		])
+		// Upstash (RESP2 wire) and the SDK expect a single flat array, NOT nested tuples.
+		expect(result).toEqual(["a", 10, "b", 20])
 	})
 
 	test("zrange BYSCORE", async () => {
@@ -203,7 +200,7 @@ describe("SDK: sorted set advanced", () => {
 		expect(count).toBe(2)
 	})
 
-	test("zpopmin + zpopmax return member-score tuples", async () => {
+	test("zpopmin + zpopmax with count return a flat [member, score, ...] array", async () => {
 		const key = k()
 		await redis.zadd(
 			key,
@@ -212,9 +209,27 @@ describe("SDK: sorted set advanced", () => {
 			{ score: 3, member: "c" },
 		)
 		const min = await redis.zpopmin(key, 1)
-		expect(min).toEqual([["a", 1]])
+		expect(min).toEqual(["a", 1])
 		const max = await redis.zpopmax(key, 1)
-		expect(max).toEqual([["c", 3]])
+		expect(max).toEqual(["c", 3])
+	})
+
+	test("zrange withScores via a pipeline is also flattened", async () => {
+		const key = k()
+		await redis.zadd(key, { score: 1, member: "x" }, { score: 2, member: "y" })
+		const p = redis.pipeline()
+		p.zrange(key, 0, -1, { withScores: true })
+		const [result] = await p.exec<[(string | number)[]]>()
+		expect(result).toEqual(["x", 1, "y", 2])
+	})
+
+	test("hrandfield withValues returns a {field: value} object", async () => {
+		const key = k()
+		await redis.hset(key, { f1: "v1", f2: "v2" })
+		// The SDK's HRANDFIELD WITHVALUES deserializer iterates the reply in steps of
+		// two, so it only works if up-redis returns a flat [field, value, ...] array.
+		const result = await redis.hrandfield(key, 2, true)
+		expect(result).toEqual({ f1: "v1", f2: "v2" })
 	})
 })
 

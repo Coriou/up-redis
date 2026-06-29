@@ -5,6 +5,7 @@ import { log } from "../logger"
 import { getClient } from "../redis"
 import { encodeResult } from "../translate/encoding"
 import { normalizeResp3 } from "../translate/response"
+import { flattenScorePairs } from "../translate/score-pairs"
 
 export const commandRoutes = new Hono()
 
@@ -16,7 +17,7 @@ async function executeCommand(c: Context, command: string, args: string[]) {
 
 	try {
 		const raw = await getClient().send(command, args)
-		let result = normalizeResp3(raw)
+		let result = flattenScorePairs(command, args, normalizeResp3(raw))
 		if (c.req.header("upstash-encoding")?.toLowerCase() === "base64") {
 			result = encodeResult(result)
 		}
