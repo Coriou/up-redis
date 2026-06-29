@@ -5,6 +5,20 @@ import { closeAllSubscriptions } from "./routes/pubsub"
 import { app } from "./server"
 import { setShuttingDown } from "./shutdown"
 
+// Process-level safety nets, registered before startup so they also cover boot.
+// An uncaught exception leaves the process in an unknown state — log loudly and exit
+// non-zero so the orchestrator restarts us. An unhandled rejection is logged but is
+// NOT fatal: e.g. a late next() rejection after the timeout middleware already
+// responded shouldn't take the whole server down.
+process.on("uncaughtException", (err: Error) => {
+	log.error("uncaught exception, exiting", { error: err.message, stack: err.stack })
+	process.exit(1)
+})
+process.on("unhandledRejection", (reason: unknown) => {
+	const err = reason instanceof Error ? reason : new Error(String(reason))
+	log.error("unhandled promise rejection", { error: err.message, stack: err.stack })
+})
+
 async function main(): Promise<void> {
 	await initRedis()
 	log.info("connected to redis", { url: redactUrl(config.redisUrl) })

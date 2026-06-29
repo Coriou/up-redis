@@ -45,6 +45,48 @@ const MAX_CHANNEL_NAME_LENGTH = 512
  */
 const KEEPALIVE_INTERVAL_MS = 15_000
 
+/**
+ * Max un-acknowledged SSE writes before we treat the consumer as stuck. SSE writes are
+ * fire-and-forget, so a fast publisher feeding a slow/stalled subscriber would otherwise
+ * buffer messages without bound and grow memory per connection. Past this many in-flight
+ * writes we stop writing and tear the subscription down via `onStuck`.
+ */
+export const MAX_OUTSTANDING_SSE_WRITES = 1024
+
+/**
+ * Wrap an SSE stream with a bounded number of outstanding (un-settled) writes. Returns a
+ * writer that drops + signals `onStuck` once the backlog is exceeded, instead of letting
+ * a slow consumer grow memory unbounded.
+ */
+export function createBoundedSseWriter(
+	stream: Pick<SSEStreamingApi, "writeSSE">,
+	onStuck: () => void,
+): (data: string) => void {
+	let outstanding = 0
+	let stuck = false
+	return (data: string) => {
+		if (stuck) return
+		if (outstanding >= MAX_OUTSTANDING_SSE_WRITES) {
+			stuck = true
+			onStuck()
+			return
+		}
+		outstanding++
+		stream.writeSSE({ data }).then(
+			() => {
+				outstanding--
+			},
+			() => {
+				outstanding--
+				if (!stuck) {
+					stuck = true
+					onStuck()
+				}
+			},
+		)
+	}
+}
+
 /** Reject null bytes and ASCII control characters (0x00–0x1F, 0x7F) */
 function hasControlCharacters(str: string): boolean {
 	for (let i = 0; i < str.length; i++) {
@@ -130,15 +172,19 @@ async function handleSubscribe(c: Context) {
 			})
 
 			let disconnected = false
+			// Tear the subscription down if the consumer stalls: aborting the stream fires
+			// onAbort, ending the Promise.race below and running the cleanup finally.
+			const onStuck = () => {
+				disconnected = true
+				try {
+					stream.abort()
+				} catch {}
+			}
+			const boundedWrite = createBoundedSseWriter(stream, onStuck)
 			// Buffer messages until the subscribe confirmation is written, so the SDK
 			// always sees the confirmation first even if a publisher races a message
 			// in during subscription setup (mirrors the pattern-subscribe path).
-			const ordered = createConfirmationOrderedBuffer((data) => {
-				stream.writeSSE({ data }).catch(() => {
-					// Stop processing further messages — abort handler cleans up
-					disconnected = true
-				})
-			})
+			const ordered = createConfirmationOrderedBuffer(boundedWrite)
 			const listener = (message: string, ch: string) => {
 				if (disconnected) return
 				ordered.push(formatMessageEvent(ch, message))
@@ -233,12 +279,13 @@ async function handlePatternSubscribe(c: Context) {
 		let ready = false
 		const pendingMessages: string[] = []
 
-		const writeData = (data: string) => {
-			if (disconnected) return
-			stream.writeSSE({ data }).catch(() => {
-				disconnected = true
-			})
+		const onStuck = () => {
+			disconnected = true
+			try {
+				stream.abort()
+			} catch {}
 		}
+		const writeData = createBoundedSseWriter(stream, onStuck)
 
 		const abortPromise = new Promise<void>((resolve) => {
 			stream.onAbort(() => {
@@ -250,6 +297,7 @@ async function handlePatternSubscribe(c: Context) {
 		let sub: PatternSubscription
 		try {
 			sub = await createPatternSubscription(pattern, (matchedPattern, channel, message) => {
+				if (disconnected) return
 				const data = formatPatternMessageEvent(matchedPattern, channel, message)
 				if (!ready) {
 					pendingMessages.push(data)
