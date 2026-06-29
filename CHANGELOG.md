@@ -9,6 +9,8 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-29
+
 ### Fixed
 
 - **SDK compatibility (sorted sets / hashes):** `ZRANGE`/`ZREVRANGE`/`ZRANGEBYSCORE`
