@@ -15,6 +15,23 @@ afterAll(async () => {
 	}
 })
 
+describe("SDK: literal-value fidelity in base64 mode", () => {
+	test('the literal value "OK" round-trips through a list', async () => {
+		// Regression: "OK" inside an array used to be left unencoded, so the SDK
+		// (default base64 mode) decoded it to garbage. It must survive a round-trip.
+		const key = k()
+		await redis.rpush(key, "OK", "hello", "OK")
+		const list = await redis.lrange(key, 0, -1)
+		expect(list).toEqual(["OK", "hello", "OK"])
+	})
+
+	test('the literal value "OK" round-trips through GET', async () => {
+		const key = k()
+		await redis.set(key, "OK")
+		expect(await redis.get<string>(key)).toBe("OK")
+	})
+})
+
 describe("SDK: SET option combinations", () => {
 	test("set with nx (only if not exists)", async () => {
 		const key = k()

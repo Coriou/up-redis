@@ -66,6 +66,30 @@ describe("encodeResult", () => {
 		expect(encodeResult([])).toEqual([])
 	})
 
+	// The SDK's decode() only honors the literal "OK" passthrough for a top-level
+	// scalar (and elements it reaches via a recursive decode() call). Direct array
+	// children are base64-decoded UNCONDITIONALLY, so a literal "OK" stored as a
+	// value and read back via LRANGE/MGET/etc. must be base64-encoded here or the
+	// SDK decodes "OK" to garbage ("8"). See encoding.ts for the depth-parity rule.
+	const OK_B64 = Buffer.from("OK", "utf-8").toString("base64") // "T0s="
+
+	test('"OK" inside an array IS base64-encoded (depth 1)', () => {
+		expect(encodeResult(["OK", "hello"])).toEqual([OK_B64, "aGVsbG8="])
+	})
+
+	test('"OK" passthrough still applies at the top level (depth 0)', () => {
+		expect(encodeResult("OK")).toBe("OK")
+	})
+
+	test('"OK" nested one array deeper is passed through (depth 2, even)', () => {
+		// raw.map's array branch recurses via decode(), which re-applies the "OK" rule.
+		expect(encodeResult([["OK"]])).toEqual([["OK"]])
+	})
+
+	test('"OK" three arrays deep is encoded again (depth 3, odd)', () => {
+		expect(encodeResult([[["OK"]]])).toEqual([[[OK_B64]]])
+	})
+
 	test("HGETALL-style flat array (alternating key-value strings)", () => {
 		const flat = ["field1", "value1", "field2", "value2"]
 		const encoded = encodeResult(flat)
