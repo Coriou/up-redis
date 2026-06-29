@@ -4,6 +4,7 @@ import { config } from "../config"
 import { getClient } from "../redis"
 import { encodeResult } from "../translate/encoding"
 import { normalizeResp3 } from "../translate/response"
+import { flattenScorePairs } from "../translate/score-pairs"
 
 export const pipelineRoutes = new Hono()
 
@@ -42,16 +43,22 @@ pipelineRoutes.post("/pipeline", async (c) => {
 	// Fire all commands concurrently to leverage Bun.redis auto-pipelining.
 	// Invalid entries become instantly-rejected promises (no Redis call).
 	// Redis executes pipelined commands in FIFO order on a single connection.
+	// `parsedCommands` is built in lockstep with `promises` so the result mapping can
+	// apply command-aware withscores flattening to each fulfilled reply.
+	const parsedCommands: Array<{ command: string; args: string[] } | null> = []
 	const promises = body.map((cmd) => {
 		if (!Array.isArray(cmd) || cmd.length === 0) {
+			parsedCommands.push(null)
 			return Promise.reject(new Error("Each pipeline command must be a non-empty array"))
 		}
 		let parsed: { command: string; args: string[] }
 		try {
 			parsed = parseCommandArray(cmd)
 		} catch (err) {
+			parsedCommands.push(null)
 			return Promise.reject(err instanceof Error ? err : new Error(String(err)))
 		}
+		parsedCommands.push(parsed)
 		const blocked = checkBlockedCommand(parsed.command, parsed.args)
 		if (blocked) {
 			return Promise.reject(new Error(blocked))
@@ -61,9 +68,11 @@ pipelineRoutes.post("/pipeline", async (c) => {
 
 	const settled = await Promise.allSettled(promises)
 
-	const results = settled.map((s) => {
+	const results = settled.map((s, i) => {
 		if (s.status === "fulfilled") {
+			const parsed = parsedCommands[i]
 			let result = normalizeResp3(s.value)
+			if (parsed) result = flattenScorePairs(parsed.command, parsed.args, result)
 			if (useBase64) result = encodeResult(result)
 			return { result }
 		}
