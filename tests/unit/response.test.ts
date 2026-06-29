@@ -7,6 +7,18 @@ describe("normalizeResp3", () => {
 		expect(normalizeResp3("hello")).toBe("hello")
 	})
 
+	test("throws on pathologically deep nesting instead of overflowing the stack", () => {
+		// A hostile/buggy reply (e.g. a deeply-nested array returned by EVAL) must not
+		// be able to recurse normalizeResp3 into a stack overflow that crashes the proxy.
+		let deep: unknown = "leaf"
+		for (let i = 0; i < 200; i++) deep = [deep]
+		expect(() => normalizeResp3(deep)).toThrow(/depth/)
+	})
+
+	test("normal nesting well within the cap is fine", () => {
+		expect(normalizeResp3([[["a"]], [1, 2]])).toEqual([[["a"]], [1, 2]])
+	})
+
 	test("empty string passes through", () => {
 		expect(normalizeResp3("")).toBe("")
 	})

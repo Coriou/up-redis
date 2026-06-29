@@ -33,6 +33,11 @@ const COMMAND_TIMEOUT_MS = 10_000
 // arrays. Cap recursion depth defensively so a malformed or hostile reply can't
 // blow the stack.
 const MAX_RESP_DEPTH = 64
+// Cap a single bulk string so a hostile/buggy server (or a giant published payload)
+// can't make us buffer an unbounded amount in memory. Real pubsub messages are far
+// smaller than this; Redis's own proto-max-bulk-len defaults to 512MB, so without a
+// cap one message could OOM the proxy. Rejected at the length declaration.
+const MAX_BULK_LENGTH = 64 * 1024 * 1024
 
 export class RespParser {
 	private buffer: Buffer = Buffer.alloc(0)
@@ -103,6 +108,9 @@ export class RespParser {
 		if (length === -1) return { value: null, offset: line.offset }
 		if (!Number.isInteger(length) || length < 0) {
 			throw new Error(`Invalid Redis bulk string length: ${line.text}`)
+		}
+		if (length > MAX_BULK_LENGTH) {
+			throw new Error(`Redis bulk string length ${length} exceeds maximum of ${MAX_BULK_LENGTH}`)
 		}
 
 		const end = line.offset + length
@@ -322,9 +330,12 @@ export async function createPatternSubscription(
 	onMessage: (pattern: string, channel: string, message: string) => void,
 ): Promise<PatternSubscription> {
 	const connection = new RawPatternConnection(onMessage)
-	await connection.connect(parseRedisUrl(config.redisUrl))
 
 	try {
+		// connect() runs the AUTH/SELECT handshake; if either fails it throws. Keep it
+		// inside the try so the dedicated socket is always closed on any setup failure
+		// (otherwise an AUTH/SELECT rejection would leak the open socket).
+		await connection.connect(parseRedisUrl(config.redisUrl))
 		const count = await connection.psubscribe(pattern)
 		return {
 			count,
@@ -345,7 +356,7 @@ function encodeRespCommand(parts: string[]): string {
 	return command
 }
 
-function parseRedisUrl(rawUrl: string): RedisConnectionInfo {
+export function parseRedisUrl(rawUrl: string): RedisConnectionInfo {
 	const url = new URL(rawUrl)
 	const protocol = url.protocol.toLowerCase()
 	const tls = protocol === "rediss:" || protocol === "valkeys:"
