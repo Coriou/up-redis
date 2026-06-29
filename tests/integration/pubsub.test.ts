@@ -92,6 +92,25 @@ function ch(prefix = "pubsub"): string {
 	return testKey(prefix)
 }
 
+/**
+ * Poll an async predicate until it returns true, or throw after `timeoutMs`.
+ * Used for steady-state cleanup assertions (e.g. subscriber count drops to 0
+ * after a disconnect) that the server reaches asynchronously — polling tolerates
+ * variable teardown latency, where a single fixed sleep is the classic flake source.
+ */
+async function pollUntil(
+	predicate: () => Promise<boolean>,
+	{ timeoutMs = 2000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+	const start = Date.now()
+	while (!(await predicate())) {
+		if (Date.now() - start > timeoutMs) {
+			throw new Error(`pollUntil: condition not met within ${timeoutMs}ms`)
+		}
+		await new Promise((r) => setTimeout(r, intervalMs))
+	}
+}
+
 describe("GET/POST /subscribe/:channel", () => {
 	test("returns subscribe confirmation as first event", async () => {
 		const channel = ch()
@@ -197,12 +216,10 @@ describe("GET/POST /subscribe/:channel", () => {
 		// Disconnect
 		sub.controller.abort()
 
-		// Give server time to clean up
-		await new Promise((r) => setTimeout(r, 200))
-
-		// PUBLISH should now reach 0 subscribers
-		const after = await cmd("PUBLISH", channel, "after-disconnect")
-		expect(after).toBe(0)
+		// Poll until the server has torn down the subscription — PUBLISH reaching 0
+		// subscribers is the observable steady state. Polling (vs. a single fixed
+		// sleep) tolerates variable cleanup latency without flaking.
+		await pollUntil(async () => (await cmd("PUBLISH", channel, "after-disconnect")) === 0)
 	})
 
 	test("auth required", async () => {
@@ -262,14 +279,18 @@ describe("GET/POST /subscribe/:channel", () => {
 		await sub2.waitForEvents(1)
 
 		await cmd("PUBLISH", ch1, "only-for-ch1")
-
 		await sub1.waitForEvents(2)
 
-		// Give sub2 a moment to NOT receive the message
-		await new Promise((r) => setTimeout(r, 200))
+		// Deterministic round-trip instead of a fixed sleep: publish a sentinel to ch2
+		// AFTER the ch1 message and wait for sub2 to receive it. A subscriber receives
+		// messages in publish order, so once the sentinel arrives, any cross-channel
+		// leak of the ch1 message would already have shown up.
+		await cmd("PUBLISH", ch2, "only-for-ch2")
+		await sub2.waitForEvents(2)
 
 		expect(sub1.events[1]).toBe(`message,${ch1},only-for-ch1`)
-		expect(sub2.events.length).toBe(1) // only subscribe confirmation
+		expect(sub2.events[1]).toBe(`message,${ch2},only-for-ch2`)
+		expect(sub2.events.length).toBe(2) // subscribe confirmation + own message — no ch1 leak
 
 		sub1.controller.abort()
 		sub2.controller.abort()
@@ -380,12 +401,10 @@ describe("GET/POST /subscribe/:channel", () => {
 			sub.controller.abort()
 		}
 
-		// Give server time to clean up all connections
-		await new Promise((r) => setTimeout(r, 300))
-
-		// Verify no leaked subscribers
-		const count = await cmd("PUBLISH", channel, "after-churn")
-		expect(count).toBe(0)
+		// Poll until all connections are cleaned up — no leaked subscribers means
+		// PUBLISH eventually reaches 0. Polling tolerates the variable teardown latency
+		// of 10 rapid cycles instead of guessing a fixed sleep.
+		await pollUntil(async () => (await cmd("PUBLISH", channel, "after-churn")) === 0)
 	})
 
 	test("PUBLISH returns subscriber count", async () => {
@@ -444,14 +463,22 @@ describe("GET/POST /psubscribe/:pattern", () => {
 	test("ignores non-matching channels", async () => {
 		const base = ch("pattern-isolated")
 		const pattern = `${base}:*`
+		const matching = `${base}:match`
 		const sub = tracked(ssePatternSubscribe(pattern))
 
 		await sub.waitForEvents(1)
 
+		// Publish to a non-matching channel, then to a matching one as a sentinel.
+		// Waiting for the matching message is a deterministic barrier: the non-matching
+		// message (published first) would already have arrived if it were going to, so
+		// no fixed sleep is needed to assert its absence.
 		await cmd("PUBLISH", `${base}-other`, "not-for-pattern")
-		await new Promise((r) => setTimeout(r, 200))
+		await cmd("PUBLISH", matching, "matches-pattern")
+		await sub.waitForEvents(2)
 
-		expect(sub.events).toEqual([`psubscribe,${pattern},1`])
+		expect(sub.events[0]).toBe(`psubscribe,${pattern},1`)
+		expect(sub.events[1]).toBe(`pmessage,${pattern},${matching},"matches-pattern"`)
+		expect(sub.events.length).toBe(2) // confirmation + sentinel only; non-matching never delivered
 
 		sub.controller.abort()
 	})
