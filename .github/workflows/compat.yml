@@ -60,16 +60,29 @@ jobs:
           echo "Testing against @upstash/redis@$VERSION"
 
       - name: Start up-redis
-        run: bun run src/index.ts &
+        run: |
+          bun run src/index.ts > "$RUNNER_TEMP/upredis.log" 2>&1 &
+          echo "UPREDIS_PID=$!" >> "$GITHUB_ENV"
 
-      - name: Wait for server
+      - name: Wait for server (readiness incl. Redis)
         run: |
           for i in $(seq 1 30); do
-            curl -sf http://localhost:8080/ && break || sleep 1
+            if curl -sf http://localhost:8080/health > /dev/null; then
+              echo "ready after ${i}s"; exit 0
+            fi
+            if ! kill -0 "$UPREDIS_PID" 2>/dev/null; then
+              echo "::error::up-redis exited during startup"; cat "$RUNNER_TEMP/upredis.log"; exit 1
+            fi
+            sleep 1
           done
+          echo "::error::up-redis did not become ready in 30s"; cat "$RUNNER_TEMP/upredis.log"; exit 1
 
       - name: Run compatibility tests
         run: bun test tests/compatibility
+
+      - name: up-redis logs (on failure)
+        if: failure()
+        run: cat "$RUNNER_TEMP/upredis.log" || true
 
       - name: Create issue on failure
         if: failure()

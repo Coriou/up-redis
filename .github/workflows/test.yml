@@ -27,7 +27,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run lint
-      - run: bun test tests/unit
+      # --coverage is advisory (no failing threshold) — it surfaces coverage in the log.
+      - run: bun test tests/unit --coverage
         env:
           UPREDIS_TOKEN: test
 
@@ -74,16 +75,33 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Start up-redis
-        run: bun run src/index.ts &
+        run: |
+          bun run src/index.ts > "$RUNNER_TEMP/upredis.log" 2>&1 &
+          echo "UPREDIS_PID=$!" >> "$GITHUB_ENV"
 
-      - name: Wait for server
+      - name: Wait for server (readiness incl. Redis)
         run: |
           for i in $(seq 1 30); do
-            curl -sf http://localhost:8080/ && break || sleep 1
+            # /health (not /) returns 200 only when Redis is actually connected — so a
+            # stale/misconfigured server can't pass readiness and silently fail every test.
+            if curl -sf http://localhost:8080/health > /dev/null; then
+              echo "ready after ${i}s"; exit 0
+            fi
+            # Fail fast (with logs) if the process died during startup instead of
+            # exhausting the loop and running the suite against nothing.
+            if ! kill -0 "$UPREDIS_PID" 2>/dev/null; then
+              echo "::error::up-redis exited during startup"; cat "$RUNNER_TEMP/upredis.log"; exit 1
+            fi
+            sleep 1
           done
+          echo "::error::up-redis did not become ready in 30s"; cat "$RUNNER_TEMP/upredis.log"; exit 1
 
       - name: Integration tests
         run: bun test tests/integration
 
       - name: SDK compatibility tests
         run: bun test tests/compatibility
+
+      - name: up-redis logs (on failure)
+        if: failure()
+        run: cat "$RUNNER_TEMP/upredis.log" || true
