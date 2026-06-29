@@ -418,6 +418,18 @@ describe("Path-style REST commands", () => {
 		const data = (await res.json()) as { result: unknown }
 		expect(data.result).toBe(Buffer.from("encoded").toString("base64"))
 	})
+
+	test("the blocked-command gate also applies to the path-style entry point", async () => {
+		// Same checkBlockedCommand path as POST /, but reached via the GET catch-all route.
+		// Connection-state command (SUBSCRIBE) must be rejected here too.
+		const subscribe = await fetch(`${BASE_URL}/SUBSCRIBE/chan`, { headers: AUTH })
+		expect(subscribe.status).toBe(400)
+		expect((await subscribe.json()) as { error: string }).toHaveProperty("error")
+
+		// Dangerous-by-default command (KEYS) via path-style is blocked too.
+		const keys = await fetch(`${BASE_URL}/KEYS/*`, { headers: AUTH })
+		expect(keys.status).toBe(400)
+	})
 })
 
 describe("POST / (blocked commands)", () => {
