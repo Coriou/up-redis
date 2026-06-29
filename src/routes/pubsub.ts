@@ -14,6 +14,7 @@ import {
 	formatPatternSubscribeEvent,
 	formatSubscribeEvent,
 } from "../translate/pubsub"
+import { createSlotLimiter } from "../util/slot-limiter"
 
 type ActiveSubscription = {
 	target: string
@@ -23,6 +24,15 @@ type ActiveSubscription = {
 }
 
 const activeSubscriptions = new Set<ActiveSubscription>()
+
+/**
+ * Caps concurrent SSE subscriptions. Each holds a dedicated Bun.redis connection, so
+ * without a cap an authenticated client could exhaust the proxy's file descriptors.
+ * A synchronous counting limiter (rather than checking `activeSubscriptions.size`)
+ * closes the TOCTOU window: a slot is reserved in the same tick as the check, before
+ * the `await createDedicatedConnection()`, so concurrent bursts can't overshoot.
+ */
+const subscriptionLimiter = createSlotLimiter(config.maxSubscriptions)
 
 export const pubsubRoutes = new Hono()
 
@@ -57,14 +67,13 @@ async function handleSubscribe(c: Context) {
 		return c.json({ error: "Service Unavailable" }, 503)
 	}
 
-	// Cap concurrent SSE subscriptions. Each one holds a dedicated Bun.redis
-	// connection — without a cap, an authenticated attacker (or runaway client)
-	// could exhaust the proxy's file descriptors and starve the rest of the API.
-	if (activeSubscriptions.size >= config.maxSubscriptions) {
+	// Reserve a subscription slot synchronously (before any await) so concurrent
+	// bursts cannot overshoot the cap. Released on every exit path below.
+	if (!subscriptionLimiter.reserve()) {
 		log.warn("subscription limit reached", {
 			requestId: c.get("requestId"),
 			channel,
-			active: activeSubscriptions.size,
+			active: subscriptionLimiter.count,
 			limit: config.maxSubscriptions,
 		})
 		return c.json({ error: "Too Many Subscriptions" }, 503)
@@ -83,6 +92,7 @@ async function handleSubscribe(c: Context) {
 				channel,
 				error: err instanceof Error ? err.message : String(err),
 			})
+			subscriptionLimiter.release()
 			try {
 				await stream.close()
 			} catch {}
@@ -96,6 +106,7 @@ async function handleSubscribe(c: Context) {
 		// leaking the dedicated connection past closeAllSubscriptions().
 		if (shuttingDown()) {
 			activeSubscriptions.delete(entry)
+			subscriptionLimiter.release()
 			try {
 				sub.close()
 			} catch {}
@@ -180,6 +191,7 @@ async function handleSubscribe(c: Context) {
 		} finally {
 			if (keepaliveTimer) clearInterval(keepaliveTimer)
 			activeSubscriptions.delete(entry)
+			subscriptionLimiter.release()
 			try {
 				await sub.unsubscribe(channel)
 			} catch {
@@ -206,11 +218,11 @@ async function handlePatternSubscribe(c: Context) {
 		return c.json({ error: "Service Unavailable" }, 503)
 	}
 
-	if (activeSubscriptions.size >= config.maxSubscriptions) {
+	if (!subscriptionLimiter.reserve()) {
 		log.warn("subscription limit reached", {
 			requestId: c.get("requestId"),
 			pattern,
-			active: activeSubscriptions.size,
+			active: subscriptionLimiter.count,
 			limit: config.maxSubscriptions,
 		})
 		return c.json({ error: "Too Many Subscriptions" }, 503)
@@ -251,6 +263,7 @@ async function handlePatternSubscribe(c: Context) {
 				pattern,
 				error: err instanceof Error ? err.message : String(err),
 			})
+			subscriptionLimiter.release()
 			try {
 				await stream.close()
 			} catch {}
@@ -262,6 +275,7 @@ async function handlePatternSubscribe(c: Context) {
 
 		if (disconnected || shuttingDown()) {
 			activeSubscriptions.delete(entry)
+			subscriptionLimiter.release()
 			sub.close()
 			try {
 				await stream.close()
@@ -298,6 +312,7 @@ async function handlePatternSubscribe(c: Context) {
 		} finally {
 			if (keepaliveTimer) clearInterval(keepaliveTimer)
 			activeSubscriptions.delete(entry)
+			subscriptionLimiter.release()
 			sub.close()
 			log.debug("pubsub punsubscribe", { pattern })
 		}
