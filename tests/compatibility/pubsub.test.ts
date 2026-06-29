@@ -7,6 +7,25 @@ function ch(prefix = "compat-ps"): string {
 	return randomKey(prefix)
 }
 
+/**
+ * Poll an async predicate until it returns true, or throw after `timeoutMs`.
+ * Used for steady-state cleanup assertions (e.g. subscriber count drops to 0
+ * after an unsubscribe) that the server reaches asynchronously — polling tolerates
+ * variable teardown latency, where a single fixed sleep is the classic flake source.
+ */
+async function pollUntil(
+	predicate: () => Promise<boolean>,
+	{ timeoutMs = 2000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<void> {
+	const start = Date.now()
+	while (!(await predicate())) {
+		if (Date.now() - start > timeoutMs) {
+			throw new Error(`pollUntil: condition not met within ${timeoutMs}ms`)
+		}
+		await new Promise((r) => setTimeout(r, intervalMs))
+	}
+}
+
 // Track abort controllers for cleanup
 const controllers: AbortController[] = []
 
@@ -205,11 +224,9 @@ describe("SDK Subscriber class", () => {
 
 		await sub.unsubscribe()
 
-		// Give server time to clean up
-		await new Promise((r) => setTimeout(r, 200))
-
-		const count = await redis.publish(channel, "after")
-		expect(count).toBe(0)
+		// Poll until the server has torn down the subscription — PUBLISH reaching 0
+		// subscribers is the observable steady state, more robust than a fixed sleep.
+		await pollUntil(async () => (await redis.publish(channel, "after")) === 0)
 	})
 
 	test("getSubscribedChannels() returns active channels", async () => {
@@ -421,11 +438,8 @@ describe("SDK compatibility: PubSub (raw SSE)", () => {
 		// Abort (unsubscribe)
 		controller.abort()
 
-		// Give server time to clean up
-		await new Promise((r) => setTimeout(r, 200))
-
-		// Publish again — should reach 0 subscribers
-		const count = await redis.publish(channel, "msg-2")
-		expect(count).toBe(0)
+		// Poll until the SSE subscription is torn down — PUBLISH reaching 0 subscribers
+		// is the observable steady state, more robust than a fixed sleep.
+		await pollUntil(async () => (await redis.publish(channel, "msg-2")) === 0)
 	})
 })
