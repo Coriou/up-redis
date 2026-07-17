@@ -11,8 +11,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Least privilege at workflow level. The github-release job elevates contents.
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -61,7 +62,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Extract changelog section
         id: changelog
@@ -72,14 +73,16 @@ jobs:
           VERSION="${TAG#v}"
           NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
           # Keep a Changelog: ## [1.0.1] - 2026-07-17 … until next ## heading
-          awk -v ver="$VERSION" '
-            $0 ~ ("^## \\[" ver "\\]") { found = 1; next }
+          # Escape dots so version is matched literally in awk.
+          ver_re=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
+          awk -v ver_re="$ver_re" '
+            $0 ~ ("^## \\[" ver_re "\\]") { found = 1; next }
             found && /^## / { exit }
             found { print }
           ' CHANGELOG.md > "$NOTES_FILE"
 
           if [ ! -s "$NOTES_FILE" ]; then
-            echo "No CHANGELOG.md section for [${VERSION}]; GitHub-generated notes only." >&2
+            echo "No CHANGELOG.md section for [${VERSION}]; using fallback body." >&2
             {
               echo "Release ${TAG}."
               echo
@@ -97,7 +100,8 @@ jobs:
           echo "path=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        # v3 runs on Node 24 (v2 is EOL / Node 20).
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
