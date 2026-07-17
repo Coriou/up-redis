@@ -1,6 +1,6 @@
 {
 	"name": "up-redis",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Self-hosted Upstash Redis-compatible HTTP proxy backed by any Redis 6+ server",
 	"type": "module",
 	"scripts": {
