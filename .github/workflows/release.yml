@@ -1,6 +1,9 @@
 name: Release
 
-# Build and publish the container image to GHCR on a version tag (e.g. `v1.0.0`).
+# On a version tag (e.g. `v1.0.0`):
+# 1. Build and publish the container image to GHCR
+# 2. Create a GitHub Release (tag alone does not create a Release)
+#
 # Until the first tag is pushed, `ghcr.io/coriou/up-redis:latest` does not exist —
 # the docker-compose quick start uses `build: .` and does not depend on this.
 on:
@@ -9,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -48,3 +51,58 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  github-release:
+    name: Create GitHub Release
+    needs: docker
+    # Tags alone do not create GitHub Releases; only run on v* tag pushes.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Extract changelog section
+        id: changelog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+          # Keep a Changelog: ## [1.0.1] - 2026-07-17 … until next ## heading
+          awk -v ver="$VERSION" '
+            $0 ~ ("^## \\[" ver "\\]") { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "No CHANGELOG.md section for [${VERSION}]; GitHub-generated notes only." >&2
+            {
+              echo "Release ${TAG}."
+              echo
+              echo "**Container image:** \`ghcr.io/coriou/up-redis:${VERSION}\`"
+            } > "$NOTES_FILE"
+          else
+            {
+              echo
+              echo "**Container image:** \`ghcr.io/coriou/up-redis:${VERSION}\` (also tagged \`${VERSION%.*}\` / \`latest\` as applicable)."
+              echo
+              echo "**Full changelog:** https://github.com/${{ github.repository }}/blob/${TAG}/CHANGELOG.md"
+            } >> "$NOTES_FILE"
+          fi
+
+          echo "path=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: ${{ steps.changelog.outputs.path }}
+          # Prepends CHANGELOG body to GitHub's auto-generated commit notes.
+          generate_release_notes: true
+          draft: false
+          prerelease: false
