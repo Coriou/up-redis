@@ -1,6 +1,6 @@
 {
 	"name": "up-redis",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Self-hosted Upstash Redis-compatible HTTP proxy backed by any Redis 6+ server",
 	"type": "module",
 	"scripts": {
@@ -17,11 +17,11 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"hono": "^4.12.27",
+		"hono": "4.12.30",
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.1",
+		"@biomejs/biome": "2.5.4",
 		"@types/bun": "^1.3.14",
 		"@upstash/redis": "^1.38.0",
 		"typescript": "^6.0.3"

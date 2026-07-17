@@ -9,6 +9,21 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-17
+
+### Changed
+
+- Bumped `hono` to 4.12.30 and `@biomejs/biome` to 2.5.4 (patch maintenance within the frozen stack).
+- Aligned `biome.json` `$schema` with the Biome 2.5.4 CLI.
+
+### Maintenance verification (2026-07-17)
+
+- `@upstash/redis` pin verified against npm latest: **1.38.0** (matches; weekly `compat.yml` last five runs success; no open SDK-compat issues).
+- Deps after refresh: hono 4.12.30, zod 4.4.3, `@biomejs/biome` 2.5.4, typescript 6.0.3 (TS 7 available on npm — intentionally not jumped).
+- Live test counts: **550** (272 unit · 177 integration · 101 SDK compat) — unchanged and re-confirmed green against redis:8.
+- Bun pin: **1.3.6** (unchanged across Dockerfile + CI).
+- Result: **1.0.1** tagged for lockfile/dep refresh; no proxy behavior changes; Bun.redis hard limits remain documented only.
+
 ## [1.0.0] - 2026-06-29
 
 ### Fixed

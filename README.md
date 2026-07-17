@@ -190,6 +190,8 @@ up-redis tracks the current `@upstash/redis` SDK (pinned to `1.38.x` in this rep
 
 up-redis itself follows [Semantic Versioning](https://semver.org/). Changes are recorded in [CHANGELOG.md](./CHANGELOG.md), and pushing a `v*` git tag builds and publishes the container image to `ghcr.io/coriou/up-redis` (semver + `latest` tags) via the release workflow. Pin a specific tag in production rather than tracking `latest`.
 
+Periodic SOTA maintenance (SDK pin vs `@latest`, in-stack patch bumps, three-tier matrix, docs/count reconcile, patch release only when runtime/deps/CI change) is summarized under each CHANGELOG release’s **Maintenance verification** block — start there for the next refresh.
+
 ## When to Use This
 
 **Good fit if you:**
