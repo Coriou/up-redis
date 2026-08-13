@@ -10,6 +10,8 @@ import { config } from "./config"
  *    - Subscriber mode: SUBSCRIBE, PSUBSCRIBE, SSUBSCRIBE (+ UNSUBSCRIBE variants)
  *    - Monitor mode: MONITOR
  *    - Transaction state: MULTI/EXEC/DISCARD/WATCH/UNWATCH (use /multi-exec)
+ *    - Authentication/protocol/cluster-routing state: AUTH, HELLO, READONLY,
+ *      READWRITE, ASKING
  *    - Database switching: SELECT
  *    - Connection termination: QUIT, RESET
  *
@@ -32,7 +34,9 @@ import { config } from "./config"
  *    - CLIENT REPLY — changes reply behavior, corrupts protocol
  *    - CLIENT NO-EVICT / NO-TOUCH / SETINFO / SETNAME — per-connection state
  *      leaks across all proxy users on the shared connection
- *    - CLUSTER FAILOVER / RESET / MEET / FORGET — cluster topology changes
+ *    - ACL / MODULE / CONFIG mutators — change server-wide security or config
+ *    - CLUSTER mutators — change cluster topology
+ *    - Persistence / replication controls — can block or reconfigure the server
  */
 
 /** Single-word blocked commands (lookup by uppercased command name). */
@@ -54,6 +58,12 @@ const BLOCKED_COMMANDS = new Set([
 	"UNWATCH",
 	// Database switching
 	"SELECT",
+	// Authentication, protocol, and cluster-routing state
+	"AUTH",
+	"HELLO",
+	"READONLY",
+	"READWRITE",
+	"ASKING",
 	// Connection termination/reset
 	"QUIT",
 	"RESET",
@@ -75,51 +85,64 @@ const BLOCKED_COMMANDS = new Set([
 	"SLAVEOF",
 	"FAILOVER",
 	"DEBUG",
+	"ACL",
+	"MODULE",
+	"MIGRATE",
+	"SAVE",
+	"BGSAVE",
+	"BGREWRITEAOF",
+	"REPLCONF",
+	"SYNC",
+	"PSYNC",
 ])
 
 /**
- * CLIENT subcommands that are blocked. CLIENT itself is allowed for read-only
- * introspection (INFO, GETNAME, ID, LIST, GETREDIR).
- *
- * Per-connection mutators (SETNAME, SETINFO, NO-EVICT, NO-TOUCH, REPLY,
- * TRACKING) leak state across all proxy users since the connection is shared.
- * Server-wide controls (KILL, PAUSE, UNPAUSE) affect everyone.
+ * CLIENT is future-proofed with a read-only allowlist. Unknown/new subcommands
+ * default to blocked instead of silently exposing a new connection or server
+ * mutator after a Redis upgrade.
  */
-const BLOCKED_CLIENT_SUBCOMMANDS = new Set([
-	"KILL",
-	"PAUSE",
-	"UNPAUSE",
-	"REPLY",
-	"NO-EVICT",
-	"NO-TOUCH",
-	"SETNAME",
-	"SETINFO",
-	"TRACKING",
+const ALLOWED_CLIENT_SUBCOMMANDS = new Set([
+	"INFO",
+	"GETNAME",
+	"ID",
+	"LIST",
+	"GETREDIR",
 	"TRACKINGINFO",
+	"HELP",
 ])
 
 /**
- * CLUSTER subcommands that are blocked. Read-only introspection (INFO, NODES,
- * MYID, SLOTS, SHARDS, COUNTKEYSINSLOT, GETKEYSINSLOT, KEYSLOT, LINKS, SLAVES,
- * REPLICAS, COUNT-FAILURE-REPORTS) remains available.
- *
- * Topology mutators are blocked because they're equivalent in damage to the
- * single-word admin commands like FAILOVER and SHUTDOWN.
+ * CLUSTER also uses a read-only allowlist so new topology mutators are blocked
+ * by default. These are the introspection commands available across supported
+ * Redis versions.
  */
-const BLOCKED_CLUSTER_SUBCOMMANDS = new Set([
-	"FAILOVER",
-	"RESET",
-	"MEET",
-	"FORGET",
-	"REPLICATE",
-	"ADDSLOTS",
-	"ADDSLOTSRANGE",
-	"DELSLOTS",
-	"DELSLOTSRANGE",
-	"FLUSHSLOTS",
-	"SETSLOT",
-	"BUMPEPOCH",
+const ALLOWED_CLUSTER_SUBCOMMANDS = new Set([
+	"INFO",
+	"NODES",
+	"MYID",
+	"SLOTS",
+	"SHARDS",
+	"COUNTKEYSINSLOT",
+	"GETKEYSINSLOT",
+	"KEYSLOT",
+	"LINKS",
+	"SLAVES",
+	"REPLICAS",
+	"COUNT-FAILURE-REPORTS",
+	"HELP",
 ])
+
+/** Server command families where only explicitly read-only operations are safe. */
+const READ_ONLY_SUBCOMMANDS = new Map<string, ReadonlySet<string>>([
+	["CONFIG", new Set(["GET", "HELP"])],
+	["FUNCTION", new Set(["LIST", "STATS", "DUMP", "HELP"])],
+	["LATENCY", new Set(["DOCTOR", "GRAPH", "HISTORY", "HISTOGRAM", "LATEST", "HELP"])],
+	["MEMORY", new Set(["DOCTOR", "MALLOC-STATS", "STATS", "USAGE", "HELP"])],
+	["SLOWLOG", new Set(["GET", "LEN", "HELP"])],
+])
+
+/** SCRIPT LOAD/EXISTS remain available for EVALSHA compatibility. */
+const BLOCKED_SCRIPT_SUBCOMMANDS = new Set(["DEBUG", "FLUSH", "KILL"])
 
 const TRANSACTION_HINT = "Use POST /multi-exec for transactions"
 const PUBSUB_HINT = "Use GET/POST /subscribe/:channel for PubSub"
@@ -149,7 +172,23 @@ const BLOCKING_CMDS = new Set([
 	"WAIT",
 	"WAITAOF",
 ])
-const ADMIN_CMDS = new Set(["SHUTDOWN", "REPLICAOF", "SLAVEOF", "FAILOVER", "DEBUG", "MONITOR"])
+const ADMIN_CMDS = new Set([
+	"SHUTDOWN",
+	"REPLICAOF",
+	"SLAVEOF",
+	"FAILOVER",
+	"DEBUG",
+	"MONITOR",
+	"ACL",
+	"MODULE",
+	"MIGRATE",
+	"SAVE",
+	"BGSAVE",
+	"BGREWRITEAOF",
+	"REPLCONF",
+	"SYNC",
+	"PSYNC",
+])
 
 /**
  * Dangerous but Upstash-allowed commands, blocked by default. KEYS is O(N) and
@@ -200,25 +239,41 @@ export function checkBlockedCommand(
 		if (ADMIN_CMDS.has(upper)) {
 			return `${upper} is not allowed — ${ADMIN_REASON}`
 		}
-		// SELECT, QUIT, RESET
+		// Shared-connection state commands (AUTH, HELLO, SELECT, QUIT, etc.)
 		return `${upper} is not allowed — it would corrupt the shared Redis connection`
 	}
 
-	// CLIENT subcommands: allow read-only ones (CLIENT INFO, CLIENT GETNAME, CLIENT ID, CLIENT LIST),
-	// block dangerous ones (CLIENT KILL, CLIENT PAUSE, CLIENT REPLY, CLIENT NO-EVICT, CLIENT SETNAME, CLIENT SETINFO, etc.)
+	// CLIENT subcommands: explicitly allow only read-only introspection. Unknown/new
+	// subcommands are blocked, which keeps the policy safe across Redis upgrades.
 	if (upper === "CLIENT" && firstArg) {
 		const sub = firstArg.toUpperCase()
-		if (BLOCKED_CLIENT_SUBCOMMANDS.has(sub)) {
+		if (!ALLOWED_CLIENT_SUBCOMMANDS.has(sub)) {
 			return `CLIENT ${sub} is not allowed — it would affect the shared Redis connection or other clients`
 		}
 	}
 
-	// CLUSTER subcommands: allow read-only introspection (INFO, NODES, etc.),
-	// block topology mutators (FAILOVER, RESET, MEET, FORGET, etc.)
+	// CLUSTER subcommands: explicitly allow only read-only introspection.
 	if (upper === "CLUSTER" && firstArg) {
 		const sub = firstArg.toUpperCase()
-		if (BLOCKED_CLUSTER_SUBCOMMANDS.has(sub)) {
+		if (!ALLOWED_CLUSTER_SUBCOMMANDS.has(sub)) {
 			return `CLUSTER ${sub} is not allowed — ${ADMIN_REASON}`
+		}
+	}
+
+	// CONFIG, FUNCTION, LATENCY, MEMORY, and SLOWLOG mix read-only and server-wide
+	// mutating operations under one command name. Keep only the explicit safe subset.
+	const readOnlySubcommands = READ_ONLY_SUBCOMMANDS.get(upper)
+	if (readOnlySubcommands && firstArg) {
+		const sub = firstArg.toUpperCase()
+		if (!readOnlySubcommands.has(sub)) {
+			return `${upper} ${sub} is not allowed — ${ADMIN_REASON}`
+		}
+	}
+
+	if (upper === "SCRIPT" && firstArg) {
+		const sub = firstArg.toUpperCase()
+		if (BLOCKED_SCRIPT_SUBCOMMANDS.has(sub)) {
+			return `SCRIPT ${sub} is not allowed — ${ADMIN_REASON}`
 		}
 	}
 

@@ -384,7 +384,9 @@ describe("SDK: Geo operations", () => {
 			{ longitude: 13.361389, latitude: 38.115556, member: "Palermo" },
 			{ longitude: 15.087269, latitude: 37.502669, member: "Catania" },
 		)
-		const dist = await redis.geodist(key, "Palermo", "Catania", "KM")
+		// Redis 6 requires lowercase units on the wire, while the SDK's public type
+		// currently spells the same values in uppercase.
+		const dist = await redis.geodist(key, "Palermo", "Catania", "km" as "KM")
 		expect(typeof dist).toBe("number")
 		expect(dist as number).toBeGreaterThan(100) // ~166km
 	})

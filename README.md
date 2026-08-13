@@ -123,7 +123,7 @@ curl -X POST http://localhost:8080/ \
 
 ## API Compatibility
 
-Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 550 tests including 101 using the real `@upstash/redis` SDK.
+Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 570 tests including 101 using the real `@upstash/redis` SDK.
 
 | Endpoint | Status |
 |----------|--------|
@@ -144,14 +144,14 @@ Authentication accepts `Authorization: Bearer <token>` and Upstash's `_token=<to
 
 All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work, with these exceptions blocked at the proxy layer to protect the shared connection:
 
-- **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `SELECT`, `QUIT`, `RESET`
+- **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `AUTH`, `HELLO`, `READONLY`/`READWRITE`, `ASKING`, `SELECT`, `QUIT`, `RESET`
 - **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
-- **Server admin / DoS vectors:** `SHUTDOWN`, `REPLICAOF`/`SLAVEOF`, `FAILOVER`, `DEBUG`, `MONITOR`, `CLIENT KILL`/`PAUSE`/`UNPAUSE`/`REPLY`/`NO-EVICT`/`NO-TOUCH`/`SETNAME`/`SETINFO`/`TRACKING`, `CLUSTER FAILOVER`/`RESET`/`MEET`/`FORGET`/`REPLICATE`/`ADDSLOTS`/`DELSLOTS`/`SETSLOT`
+- **Server admin / DoS vectors:** `SHUTDOWN`, replication/persistence controls (`REPLICAOF`, `FAILOVER`, `MIGRATE`, `SAVE`, `BGSAVE`, etc.), `DEBUG`, `ACL`, `MODULE`, mutating `CONFIG`/`FUNCTION`/`SCRIPT`/`LATENCY`/`MEMORY`/`SLOWLOG` subcommands, mutating `CLIENT` subcommands, and all non-read-only `CLUSTER` subcommands
 - **Dangerous by default (configurable):** `KEYS` (O(N) — scans the whole keyspace on the shared connection), `FLUSHALL`, `FLUSHDB`, `SWAPDB` are blocked by default. Set `UPREDIS_ALLOW_DANGEROUS_COMMANDS=true` to permit them. Add your own with `UPREDIS_BLOCKED_COMMANDS`.
 
 Requests are also rejected with `400` if a command argument isn't a string or number (e.g. an object or `null`, which would otherwise be silently coerced to garbage like `"[object Object]"`), or if the `Upstash-Response-Format: resp2` header is sent (up-redis only speaks the JSON envelope).
 
-Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST` remain available, as do read-only `CLUSTER` subcommands like `CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER MYID`, `CLUSTER SLOTS`, `CLUSTER SHARDS`.
+Read-only `CLIENT`, `CLUSTER`, `CONFIG`, `FUNCTION`, `LATENCY`, `MEMORY`, and `SLOWLOG` subcommands remain available through explicit allowlists. Unknown subcommands in these mixed admin families fail closed after a Redis upgrade. `SCRIPT EXISTS` and `SCRIPT LOAD` remain available for `EVALSHA` compatibility.
 
 ### Why not SRH?
 
@@ -165,7 +165,7 @@ Read-only `CLIENT` subcommands like `CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`
 | Request timeout | None | Per-request timeout middleware |
 | Concurrent MULTI/EXEC | Broken ([#25](https://github.com/hiett/serverless-redis-http/issues/25)) | Correct — dedicated connection per transaction |
 | PubSub (SUBSCRIBE) | Not supported | SSE streaming, Upstash-compatible |
-| Tests | External | 550 built-in (unit + integration + SDK compat) |
+| Tests | External | 570 built-in (unit + integration + SDK compat) |
 
 ### Known Differences from Upstash
 
@@ -333,12 +333,12 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-550 tests across three tiers:
+570 tests across three tiers:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 272 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, blocked/dangerous command checks, arg validation, token strength |
-| **Integration** | 177 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); 3 skipped on Redis < 7.4 (HSETEX/HGETEX/HGETDEL) |
+| **Unit** | 290 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, fail-closed admin command policy, arg validation, token strength |
+| **Integration** | 179 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); Redis 6 skips five hash-field-expiry commands, Redis 7 skips the three Redis-8-only commands |
 | **SDK Compatibility** | 101 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, withscores/withvalues shape, literal-"OK" fidelity, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
@@ -397,7 +397,8 @@ different one by setting `UPREDIS_REDIS_IMAGE` (in `.env` locally, or Coolify's 
 | `UPREDIS_REDIS_IMAGE`        | Backend          | Notes                                          |
 | ---------------------------- | ---------------- | ---------------------------------------------- |
 | `redis:8-alpine` (default)   | Redis 8          | Core + Vector Sets only (no JSON/FT/TS/Bloom)  |
-| `redis:7-alpine`             | Redis 7          | Previous default; the CI baseline gate         |
+| `redis:6-alpine`             | Redis 6          | Minimum supported version; CI floor gate       |
+| `redis:7-alpine`             | Redis 7          | Previous default; CI-gated                     |
 | `valkey/valkey:9-alpine`     | Valkey 9         | BSD-licensed; no AGPL; no JSON/FT in base      |
 | `redis/redis-stack-server`   | Redis + modules  | Debian, large image; JSON/FT/TS/Bloom          |
 | `valkey/valkey-bundle`       | Valkey + modules | BSD; JSON/FT etc.                              |
@@ -405,8 +406,8 @@ different one by setting `UPREDIS_REDIS_IMAGE` (in `.env` locally, or Coolify's 
 The **minimum supported backend is still Redis 6+** — bumping the default to Redis 8 is a
 convenience, not a floor change. Redis 7 remains a first-class, CI-gated option.
 
-CI runs the integration + SDK-compatibility suites against Redis 7, Redis 8, and Valkey 9 (all
-required to merge). Module backends (`redis/redis-stack-server`, `valkey/valkey-bundle`) are
+CI runs the integration + SDK-compatibility suites against Redis 6, Redis 7, Redis 8, and Valkey 9
+(all required to merge). Module backends (`redis/redis-stack-server`, `valkey/valkey-bundle`) are
 **not** CI-tested — the core variants stay module-free.
 
 ### Upgrade
@@ -449,8 +450,8 @@ COMPOSE_FILE=docker-compose.yml:docker-compose.external.yml docker compose up -d
 and set `UPREDIS_REDIS_URL` to your endpoint (the override requires it and fails fast if unset).
 
 **TLS:** bare `rediss://` / `valkeys://` verifies out of the box against Bun's bundled CAs for
-Upstash, ElastiCache, MemoryDB, Azure Cache, Redis Cloud, and current Aiven. `rediss://` requires
-Bun ≥ 1.2.22 (up-redis ships 1.3.6). **Known limitation:** **private-CA backends** (e.g. GCP
+Upstash, ElastiCache, MemoryDB, Azure Cache, Redis Cloud, and current Aiven. up-redis requires
+Bun ≥ 1.3.6 and ships 1.3.14. **Known limitation:** **private-CA backends** (e.g. GCP
 Memorystore, a self-hosted private CA) are not yet supported — a `UPREDIS_REDIS_CA_FILE` option is
 a planned follow-up.
 

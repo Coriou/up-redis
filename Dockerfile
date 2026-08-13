@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.6-alpine AS builder
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS builder
 WORKDIR /app
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
@@ -6,9 +6,11 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN bun build src/index.ts --target=bun --outdir=dist --minify
 
-FROM oven/bun:1.3.6-alpine
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0
 WORKDIR /app
-RUN apk add --no-cache curl
+# Refresh base packages before installing the healthcheck dependency so fixed
+# Alpine security updates are present even when the pinned base digest is older.
+RUN apk upgrade --no-cache && apk add --no-cache curl
 # The bundle is self-contained (only node:crypto, a Bun built-in, stays external),
 # so no node_modules are needed at runtime — smaller image, less attack surface.
 COPY --from=builder /app/dist ./dist

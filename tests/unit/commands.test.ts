@@ -69,6 +69,12 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("RESET")).not.toBe(null)
 	})
 
+	for (const command of ["AUTH", "HELLO", "READONLY", "READWRITE", "ASKING"]) {
+		test(`${command} shared-connection state is blocked`, () => {
+			expect(checkBlockedCommand(command)).not.toBe(null)
+		})
+	}
+
 	// Case insensitivity
 	test("case insensitive: subscribe", () => {
 		expect(checkBlockedCommand("subscribe")).not.toBe(null)
@@ -182,6 +188,22 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("DEBUG", "OBJECT")).not.toBe(null)
 	})
 
+	for (const command of [
+		"ACL",
+		"MODULE",
+		"MIGRATE",
+		"SAVE",
+		"BGSAVE",
+		"BGREWRITEAOF",
+		"REPLCONF",
+		"SYNC",
+		"PSYNC",
+	]) {
+		test(`${command} server administration is blocked`, () => {
+			expect(checkBlockedCommand(command)).not.toBe(null)
+		})
+	}
+
 	// CLIENT subcommands — read-only allowed, dangerous blocked
 	test("CLIENT KILL is blocked", () => {
 		expect(checkBlockedCommand("CLIENT", "KILL")).not.toBe(null)
@@ -235,6 +257,11 @@ describe("checkBlockedCommand", () => {
 
 	test("CLIENT LIST is allowed", () => {
 		expect(checkBlockedCommand("CLIENT", "LIST")).toBe(null)
+	})
+
+	test("CLIENT TRACKINGINFO is allowed but unknown subcommands fail closed", () => {
+		expect(checkBlockedCommand("CLIENT", "TRACKINGINFO")).toBe(null)
+		expect(checkBlockedCommand("CLIENT", "FUTURE-MUTATOR")).not.toBe(null)
 	})
 
 	test("CLIENT without subcommand is allowed", () => {
@@ -302,6 +329,10 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("CLUSTER", "SLOTS")).toBe(null)
 	})
 
+	test("unknown CLUSTER subcommands fail closed", () => {
+		expect(checkBlockedCommand("CLUSTER", "FUTURE-MUTATOR")).not.toBe(null)
+	})
+
 	test("CLUSTER without subcommand is allowed", () => {
 		expect(checkBlockedCommand("CLUSTER")).toBe(null)
 	})
@@ -331,8 +362,29 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("PUBLISH")).toBe(null)
 	})
 
-	test("CONFIG is allowed", () => {
-		expect(checkBlockedCommand("CONFIG")).toBe(null)
+	test("CONFIG GET is allowed while CONFIG mutations are blocked", () => {
+		expect(checkBlockedCommand("CONFIG", "GET")).toBe(null)
+		expect(checkBlockedCommand("CONFIG", "SET")).not.toBe(null)
+		expect(checkBlockedCommand("CONFIG", "RESETSTAT")).not.toBe(null)
+	})
+
+	test("mixed server command families allow reads and block writes", () => {
+		expect(checkBlockedCommand("FUNCTION", "LIST")).toBe(null)
+		expect(checkBlockedCommand("FUNCTION", "LOAD")).not.toBe(null)
+		expect(checkBlockedCommand("LATENCY", "LATEST")).toBe(null)
+		expect(checkBlockedCommand("LATENCY", "RESET")).not.toBe(null)
+		expect(checkBlockedCommand("MEMORY", "USAGE")).toBe(null)
+		expect(checkBlockedCommand("MEMORY", "PURGE")).not.toBe(null)
+		expect(checkBlockedCommand("SLOWLOG", "GET")).toBe(null)
+		expect(checkBlockedCommand("SLOWLOG", "RESET")).not.toBe(null)
+	})
+
+	test("SCRIPT keeps EVALSHA helpers and blocks global/debug operations", () => {
+		expect(checkBlockedCommand("SCRIPT", "EXISTS")).toBe(null)
+		expect(checkBlockedCommand("SCRIPT", "LOAD")).toBe(null)
+		expect(checkBlockedCommand("SCRIPT", "DEBUG")).not.toBe(null)
+		expect(checkBlockedCommand("SCRIPT", "FLUSH")).not.toBe(null)
+		expect(checkBlockedCommand("SCRIPT", "KILL")).not.toBe(null)
 	})
 
 	test("LPOP (non-blocking) is allowed", () => {

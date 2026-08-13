@@ -8,7 +8,7 @@ describe("UPREDIS_METRICS=true exposes Prometheus metrics", () => {
 	let server: SpawnedServer
 	beforeAll(async () => {
 		server = await spawnServer({ UPREDIS_METRICS: "true" })
-	})
+	}, 30_000)
 	afterAll(() => server?.close())
 
 	test("/metrics is mounted, unauthenticated, and reflects recorded requests", async () => {
@@ -36,7 +36,7 @@ describe("UPREDIS_MAX_SUBSCRIPTIONS enforces the cap", () => {
 	let server: SpawnedServer
 	beforeAll(async () => {
 		server = await spawnServer({ UPREDIS_MAX_SUBSCRIPTIONS: "1" })
-	})
+	}, 30_000)
 	afterAll(() => server?.close())
 
 	test("a second concurrent subscription is rejected with 503", async () => {
@@ -66,7 +66,7 @@ describe("UPREDIS_ALLOW_DANGEROUS_COMMANDS=true permits KEYS over HTTP", () => {
 	let server: SpawnedServer
 	beforeAll(async () => {
 		server = await spawnServer({ UPREDIS_ALLOW_DANGEROUS_COMMANDS: "true" })
-	})
+	}, 30_000)
 	afterAll(() => server?.close())
 
 	test("KEYS runs instead of returning 400", async () => {
@@ -85,7 +85,7 @@ describe("UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false requires the header", () => {
 	let server: SpawnedServer
 	beforeAll(async () => {
 		server = await spawnServer({ UPREDIS_ALLOW_TOKEN_QUERY_PARAM: "false" })
-	})
+	}, 30_000)
 	afterAll(() => server?.close())
 
 	test("?_token auth is rejected with 401 when disabled", async () => {

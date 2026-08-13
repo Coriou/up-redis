@@ -1,15 +1,12 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
+  # GitHub supports Bun's text bun.lock natively; using the Bun ecosystem keeps
+  # manifest and lockfile updates in the same PR so frozen installs stay valid.
+  - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
-    # TypeScript stays on major 6 by deliberate frozen-stack policy (SOTA 2026-07).
-    # Dependabot group PRs do not honor @dependabot ignore comments — use config.
-    ignore:
-      - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
     groups:
       dev-dependencies:
         dependency-type: "development"
@@ -17,6 +14,19 @@ updates:
         dependency-type: "production"
 
   - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
       interval: "weekly"
