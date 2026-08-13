@@ -36,6 +36,20 @@ const { data: _probeData } = await api("POST", "/", [
 const _probeErr = (_probeData as { error?: string }).error ?? ""
 const supportsHashExpireGet = !(_probeErr && /unknown command/i.test(_probeErr))
 
+// Hash-field TTL primitives (HEXPIRE / HTTL) were added in Redis 7.4. Keep the
+// Redis 6 support claim honest by probing them independently from the Redis 8
+// HSETEX/HGETEX/HGETDEL family.
+const { data: _hashTtlProbeData } = await api("POST", "/", [
+	"HEXPIRE",
+	testKey("cmd:hash-ttl-probe"),
+	"1",
+	"FIELDS",
+	"1",
+	"f",
+])
+const _hashTtlProbeErr = (_hashTtlProbeData as { error?: string }).error ?? ""
+const supportsHashFieldTtl = !(_hashTtlProbeErr && /unknown command/i.test(_hashTtlProbeErr))
+
 describe("POST / (single command)", () => {
 	// Basic operations
 	test("SET returns OK", async () => {
@@ -178,22 +192,25 @@ describe("POST / (single command)", () => {
 
 	// Newer hash-field-TTL commands (Redis 7.4+) return integer arrays that must
 	// pass through normalizeResp3 unchanged (generic pass-through on the proxy).
-	test("HEXPIRE returns an integer array", async () => {
+	test.skipIf(!supportsHashFieldTtl)("HEXPIRE returns an integer array", async () => {
 		const key = k()
 		await cmd("HSET", key, "f1", "v1")
 		const result = await cmd("HEXPIRE", key, "100", "FIELDS", "1", "f1")
 		expect(result).toEqual([1])
 	})
 
-	test("HTTL returns an integer array with the remaining TTL", async () => {
-		const key = k()
-		await cmd("HSET", key, "f1", "v1")
-		await cmd("HEXPIRE", key, "100", "FIELDS", "1", "f1")
-		const result = (await cmd("HTTL", key, "FIELDS", "1", "f1")) as number[]
-		expect(Array.isArray(result)).toBe(true)
-		expect(result[0]).toBeGreaterThan(0)
-		expect(result[0]).toBeLessThanOrEqual(100)
-	})
+	test.skipIf(!supportsHashFieldTtl)(
+		"HTTL returns an integer array with the remaining TTL",
+		async () => {
+			const key = k()
+			await cmd("HSET", key, "f1", "v1")
+			await cmd("HEXPIRE", key, "100", "FIELDS", "1", "f1")
+			const result = (await cmd("HTTL", key, "FIELDS", "1", "f1")) as number[]
+			expect(Array.isArray(result)).toBe(true)
+			expect(result[0]).toBeGreaterThan(0)
+			expect(result[0]).toBeLessThanOrEqual(100)
+		},
+	)
 
 	// HSETEX / HGETEX / HGETDEL exist on Redis 8+ and Valkey 9+ but not on
 	// redis:7-alpine or Valkey 8, so they are guarded by the runtime probe above:
@@ -543,6 +560,27 @@ describe("POST / (blocked commands)", () => {
 		const { status, data } = await api("POST", "/", ["CLIENT", "NO-TOUCH", "ON"])
 		expect(status).toBe(400)
 		expect((data as { error: string }).error).toContain("CLIENT NO-TOUCH")
+	})
+
+	test("CONFIG SET is blocked while CONFIG GET remains available", async () => {
+		const blocked = await api("POST", "/", ["CONFIG", "SET", "maxmemory", "1mb"])
+		expect(blocked.status).toBe(400)
+		expect((blocked.data as { error: string }).error).toContain("CONFIG SET")
+
+		const allowed = await api("POST", "/", ["CONFIG", "GET", "maxmemory"])
+		expect(allowed.status).toBe(200)
+	})
+
+	test("ACL, MODULE, and AUTH are blocked before reaching Redis", async () => {
+		for (const command of [
+			["ACL", "LIST"],
+			["MODULE", "LIST"],
+			["AUTH", "new-password"],
+		]) {
+			const { status, data } = await api("POST", "/", command)
+			expect(status).toBe(400)
+			expect((data as { error: string }).error).toContain(command[0] as string)
+		}
 	})
 
 	test("CLUSTER FAILOVER is blocked", async () => {

@@ -1,0 +1,5 @@
+[allowlist]
+description = "Public documentation placeholders"
+regexes = [
+  '''Authorization: Bearer your-token''',
+]

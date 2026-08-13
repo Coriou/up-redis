@@ -9,6 +9,38 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ## [Unreleased]
 
+### Security
+
+- Hardened the shared-connection command gate against authentication/protocol state changes,
+  ACL and module administration, persistence/replication controls, and mutating admin
+  subcommands. Mixed command families now use explicit read-only allowlists so newly added
+  Redis subcommands fail closed.
+
+### Changed
+
+- Raised the supported runtime floor to Bun 1.3.6 and pinned CI/container builds to Bun 1.3.14.
+- Updated Hono to 4.13.2, `@upstash/redis` to 1.38.2, Biome to 2.5.8, and TypeScript to 7.0.2.
+- Marked the service package private and declared its Bun engine/package-manager metadata.
+
+### Fixed
+
+- Restored the documented Redis 6 support by capability-skipping Redis 7.4+/8-only hash-field
+  expiry tests and sending the Redis 6-compatible lowercase geo unit through the SDK test.
+- Switched Dependabot to its native Bun ecosystem so update PRs include `bun.lock` and pass
+  frozen-lockfile installs.
+
+### CI / Release
+
+- Added Redis 6, Bun runtime-floor, build, and container smoke-test gates.
+- Made releases tag-only and added version/changelog verification, full tests, multi-platform
+  (`linux/amd64`, `linux/arm64`) images, SBOMs, and max-level provenance.
+- Pinned workflow actions and the Bun container base to immutable digests, with Dependabot
+  coverage for Bun, Actions, Dockerfiles, and Compose manifests.
+- Added CodeQL scanning and pull-request dependency review for public supply-chain coverage.
+- Added a required Trivy image scan and refresh Alpine security packages during image builds.
+- Added a security policy, contributing guide, code of conduct, ownership, issue forms, and a
+  pull request template for public maintenance.
+
 ## [1.0.1] - 2026-07-17
 
 ### Changed

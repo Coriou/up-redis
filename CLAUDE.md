@@ -7,7 +7,7 @@ Modern rewrite of [SRH](https://github.com/hiett/serverless-redis-http), sibling
 
 ## Tech Stack
 
-- **Runtime:** Bun 1.2+ floor (native TypeScript); CI and the Docker image pin 1.3.6
+- **Runtime:** Bun 1.3.6+ floor (native TypeScript); CI and the Docker image pin 1.3.14
 - **HTTP:** Hono v4
 - **Redis client:** `Bun.redis` (native, RESP3, auto-pipelining, zero-dep)
 - **Validation:** Zod v4
@@ -90,6 +90,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 - Monitor mode: `MONITOR`
 - Transaction state: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` — use `/multi-exec`
 - Database switching: `SELECT`
+- Authentication/protocol/routing state: `AUTH`, `HELLO`, `READONLY`, `READWRITE`, `ASKING`
 - Connection termination: `QUIT`, `RESET`
 
 **Blocking commands** (would hold the shared connection and starve other requests):
@@ -105,8 +106,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 - `CLIENT KILL` — could kill the proxy's own shared connection
 - `CLIENT PAUSE` / `CLIENT UNPAUSE` — server-wide pause
 - `CLIENT REPLY` — corrupts protocol on shared connection
-- `CLIENT NO-EVICT` / `CLIENT NO-TOUCH` / `CLIENT SETNAME` / `CLIENT SETINFO` / `CLIENT TRACKING` / `CLIENT TRACKINGINFO` — per-connection state leaks across all proxy users
-- `CLUSTER FAILOVER` / `RESET` / `MEET` / `FORGET` / `REPLICATE` / `ADDSLOTS` / `DELSLOTS` / `SETSLOT` / etc. — cluster topology mutations
+- `ACL`, `MODULE`, persistence/replication controls, and mutating `CONFIG` / `FUNCTION` / `SCRIPT` / `LATENCY` / `MEMORY` / `SLOWLOG` operations
+- Mutating `CLIENT` operations and all non-read-only `CLUSTER` subcommands
 
 **Dangerous by default (configurable):**
 - `KEYS` — O(N), blocks the shared connection while it scans the whole keyspace
@@ -115,7 +116,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 
 These are blocked by default but re-enabled by setting `UPREDIS_ALLOW_DANGEROUS_COMMANDS=true`. Additional commands can be blocked via the comma-separated, case-insensitive `UPREDIS_BLOCKED_COMMANDS` (e.g. `DEBUG,KEYS`).
 
-Read-only `CLIENT` subcommands (`CLIENT INFO`, `CLIENT GETNAME`, `CLIENT ID`, `CLIENT LIST`) and read-only `CLUSTER` subcommands (`CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER MYID`, `CLUSTER SLOTS`, `CLUSTER SHARDS`, etc.) remain available. All blocked commands return `400` with an explanatory error message; transaction and pubsub commands include a hint pointing at the correct endpoint.
+Mixed admin command families use explicit read-only allowlists, so unknown subcommands fail closed after a Redis upgrade. `SCRIPT EXISTS` and `SCRIPT LOAD` remain available for `EVALSHA` compatibility. All blocked commands return `400` with an explanatory error message; transaction and pubsub commands include a hint pointing at the correct endpoint.
 
 ### RESP3 → JSON Translation (critical)
 
@@ -254,12 +255,12 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-550 tests across three tiers:
+570 tests across three tiers:
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unit**              | 272   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening, base64 encoding (incl. depth-aware "OK"), SSE ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation, blocked/dangerous/config checks, token-strength |
-| **Integration**       | 177   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles). 3 skip on Redis < 7.4 (HSETEX/HGETEX/HGETDEL). A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
+| **Unit**              | 290   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening, base64 encoding (incl. depth-aware "OK"), SSE ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation, fail-closed admin command policy, token-strength |
+| **Integration**       | 179   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers. Redis 6 skips five hash-field-expiry commands; Redis 7 skips the three Redis-8-only commands. A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
 | **SDK Compatibility** | 101   | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class, withscores/withvalues shape, literal-"OK" fidelity) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
