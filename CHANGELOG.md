@@ -15,6 +15,9 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
   ACL and module administration, persistence/replication controls, and mutating admin
   subcommands. Mixed command families now use explicit read-only allowlists so newly added
   Redis subcommands fail closed.
+- Documented the trust model: built-in command blocks are an accident-prevention net,
+  not a security boundary — scripting commands can invoke blocked commands inside Lua
+  (see README §Security and SECURITY.md).
 
 ### Changed
 
@@ -28,6 +31,8 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
   expiry tests and sending the Redis 6-compatible lowercase geo unit through the SDK test.
 - Switched Dependabot to its native Bun ecosystem so update PRs include `bun.lock` and pass
   frozen-lockfile installs.
+- Treated an empty `UPREDIS_REQUEST_TIMEOUT` value as unset so it falls back to the
+  30s default instead of silently disabling the per-request timeout.
 
 ### CI / Release
 

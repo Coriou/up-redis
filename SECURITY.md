@@ -30,3 +30,11 @@ up-redis exposes the authority of its configured Redis user to anyone holding an
 up-redis token. Use a strong token, TLS at the public edge, a least-privilege Redis
 ACL, network restrictions, and a pinned container release. See the
 [README security guidance](./README.md#security).
+
+The built-in command blocks (dangerous commands, admin command families) are an
+accident-prevention net, **not a security boundary**: scripting commands
+(`EVAL`, `EVALSHA`, `FCALL`) can invoke blocked commands inside Lua, so anyone
+holding a token can effectively run arbitrary Redis commands. To restrict that,
+block scripting via `UPREDIS_BLOCKED_COMMANDS` and/or enforce a least-privilege
+Redis ACL on the backing server (see the
+[README security guidance](./README.md#security)).

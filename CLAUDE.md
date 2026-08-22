@@ -118,6 +118,13 @@ These are blocked by default but re-enabled by setting `UPREDIS_ALLOW_DANGEROUS_
 
 Mixed admin command families use explicit read-only allowlists, so unknown subcommands fail closed after a Redis upgrade. `SCRIPT EXISTS` and `SCRIPT LOAD` remain available for `EVALSHA` compatibility. All blocked commands return `400` with an explanatory error message; transaction and pubsub commands include a hint pointing at the correct endpoint.
 
+**Scripting bypasses this gate (by design):** `EVAL`/`EVALSHA`/`FCALL` can invoke
+blocked commands (e.g. `FLUSHALL`, `KEYS`) inside Lua via `redis.call()`. The
+gate is an accident-prevention net for direct commands, not a security boundary —
+a token holder can reach blocked functionality through scripting unless the
+operator adds scripting commands to `UPREDIS_BLOCKED_COMMANDS` (README §Security
+documents this and the mitigation).
+
 ### RESP3 → JSON Translation (critical)
 
 ```
@@ -271,3 +278,10 @@ Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM 
 - [@upstash/redis SDK](https://github.com/upstash/redis-js) — client SDK + compatibility test target
 - [SRH](https://github.com/hiett/serverless-redis-http) — predecessor (Elixir), same concept
 - [up-vector](https://github.com/Coriou/up-vector) — sibling project, same architecture patterns
+
+## Maintenance Workflowz
+
+Repeatable multi-agent audit workflows live in [docs/workflowz.md](docs/workflowz.md):
+pre-release audit, monthly ecosystem sweep, and advisory triage. CI
+(`.github/workflows/`) stays the deterministic backbone — run a workflowz when
+judgment work is needed (pre-tag audits, upstream drift review, alert triage).

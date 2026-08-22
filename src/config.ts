@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-const envSchema = z.object({
+export const envSchema = z.object({
 	UPREDIS_TOKEN: z.string().min(1, "UPREDIS_TOKEN is required"),
 	UPREDIS_REDIS_URL: z.string().default("redis://localhost:6379"),
 	UPREDIS_PORT: z.coerce.number().int().positive().max(65535).default(8080),
@@ -11,7 +11,14 @@ const envSchema = z.object({
 	// value would cause setTimeout to fire on the same tick as `server.stop()`,
 	// forcing exit before any in-flight request could complete.
 	UPREDIS_SHUTDOWN_TIMEOUT: z.coerce.number().int().min(1000).default(30000),
-	UPREDIS_REQUEST_TIMEOUT: z.coerce.number().int().nonnegative().default(30000),
+	// An empty value (e.g. `UPREDIS_REQUEST_TIMEOUT=` in compose files) must fall
+	// through to the default, not coerce to 0 — 0 is the documented "disabled"
+	// value, so a blank variable would silently opt the deployment out of request
+	// timeouts. An explicit "0" still disables.
+	UPREDIS_REQUEST_TIMEOUT: z.preprocess(
+		(v) => (v === "" ? undefined : v),
+		z.coerce.number().int().nonnegative().default(30000),
+	),
 	UPREDIS_METRICS: z.enum(["true", "false"]).default("false"),
 	UPREDIS_MAX_BODY_SIZE: z.coerce.number().int().positive().default(10_485_760),
 	// Bound pipeline / multi-exec batch size. Even with the body-size cap, a
