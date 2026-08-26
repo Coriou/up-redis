@@ -22,8 +22,9 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 ### Changed
 
 - Raised the supported runtime floor to Bun 1.3.6 and pinned CI/container builds to Bun 1.3.14.
-- Updated Hono to 4.13.2, `@upstash/redis` to 1.38.2, Biome to 2.5.8, and TypeScript to 7.0.2.
+- Updated Hono to 4.13.3, `@upstash/redis` to 1.38.2, Biome to 2.5.10, Bun types to 1.4.0, and TypeScript to 7.0.2.
 - Marked the service package private and declared its Bun engine/package-manager metadata.
+- Aligned `biome.json` `$schema` with the Biome 2.5.10 CLI.
 
 ### Fixed
 
