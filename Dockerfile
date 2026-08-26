@@ -11,10 +11,12 @@ WORKDIR /app
 # CI injects a unique value per run so this security-refresh layer never
 # resolves from cache: a frozen layer once shipped Alpine packages that Trivy's
 # updated DB flagged (CVE-2026-14456) even though fixes were already published,
-# turning the vulnerability gate permanently red. Costs one short apk
-# roundtrip per build; the heavyweight builder-stage layers stay cached.
+# turning the vulnerability gate permanently red. The RUN consumes the value so
+# it keys the layer cache explicitly instead of relying on builder-version
+# quirks; costs one short apk roundtrip per build; heavy builder layers stay
+# cached.
 ARG CI_RUN_STAMP=
-RUN apk upgrade --no-cache && apk add --no-cache curl
+RUN echo "apk refresh: $CI_RUN_STAMP" && apk upgrade --no-cache && apk add --no-cache curl
 # The bundle is self-contained (only node:crypto, a Bun built-in, stays external),
 # so no node_modules are needed at runtime — smaller image, less attack surface.
 COPY --from=builder /app/dist ./dist
