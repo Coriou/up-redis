@@ -8,8 +8,12 @@ RUN bun build src/index.ts --target=bun --outdir=dist --minify
 
 FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0
 WORKDIR /app
-# Refresh base packages before installing the healthcheck dependency so fixed
-# Alpine security updates are present even when the pinned base digest is older.
+# CI injects a unique value per run so this security-refresh layer never
+# resolves from cache: a frozen layer once shipped Alpine packages that Trivy's
+# updated DB flagged (CVE-2026-14456) even though fixes were already published,
+# turning the vulnerability gate permanently red. Costs one short apk
+# roundtrip per build; the heavyweight builder-stage layers stay cached.
+ARG CI_RUN_STAMP=
 RUN apk upgrade --no-cache && apk add --no-cache curl
 # The bundle is self-contained (only node:crypto, a Bun built-in, stays external),
 # so no node_modules are needed at runtime — smaller image, less attack surface.

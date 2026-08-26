@@ -44,6 +44,8 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
   coverage for Bun, Actions, Dockerfiles, and Compose manifests.
 - Added CodeQL scanning and pull-request dependency review for public supply-chain coverage.
 - Added a required Trivy image scan and refresh Alpine security packages during image builds.
+- Refreshed the container's Alpine package layer on every CI build so the Trivy gate
+  cannot fail on CVEs whose fixes shipped after a cached layer froze older packages.
 - Added a security policy, contributing guide, code of conduct, ownership, issue forms, and a
   pull request template for public maintenance.
 

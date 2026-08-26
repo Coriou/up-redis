@@ -215,6 +215,8 @@ jobs:
           tags: upredis:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            CI_RUN_STAMP=${{ github.run_id }}
 
       - name: Scan container for known vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
