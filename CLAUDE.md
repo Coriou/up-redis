@@ -31,6 +31,7 @@ bun run lint             # Biome check
 bun run lint:fix         # Biome auto-fix
 bun run format           # Biome format
 bun run typecheck        # tsc --noEmit
+bun run check:compose    # Validate every app setting and Compose overrides (Docker needed)
 ```
 
 ### Docker
@@ -58,8 +59,8 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 ### Key patterns
 
 - **Response envelope:** `{ "result": <data> }` on success, `{ "error": "<msg>" }` on error (HTTP 400). `Upstash-Response-Format: resp2` (the SDK's binary RESP2 wire format) is rejected with `400` — up-redis only speaks the JSON envelope.
-- **Auth:** Bearer token via `Authorization` header, validated against `UPREDIS_TOKEN` env var. The `?_token=` query-param form is also accepted unless `UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false`. A startup warning fires for weak/placeholder token values.
-- **Command argument types:** `parseCommandArray` requires every argument to be a `string` or `number` — objects, `null`, and booleans are rejected with `400` rather than coerced to garbage like `"[object Object]"`.
+- **Auth:** Bearer token via `Authorization` header, validated against `UPREDIS_TOKEN` env var. The `?_token=` query-param form is also accepted unless `UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false`. Startup **refuses** well-known placeholder tokens (e.g. the `.env.example` default) unless `UPREDIS_ALLOW_PLACEHOLDER_TOKEN=true`; weak-but-not-placeholder values only warn.
+- **Command argument types:** `parseCommandArray` accepts `string`, `number`, and JSON `boolean` (coerced to `"true"`/`"false"` — matches `@upstash/redis` `defaultSerializer`, which passes booleans through raw). Objects, arrays, and `null` are rejected with `400` rather than coerced to garbage like `"[object Object]"`.
 - **Connection model:** Single shared Bun.redis connection with auto-pipelining for commands/pipelines, dedicated connection per transaction (MULTI/EXEC) and per PubSub subscription via `createDedicatedConnection()` (`new RedisClient` with `autoReconnect: false`) to prevent interleaving and to make connection drops loud rather than silent (a reconnect would lose subscriber/transaction state)
 - **RESP3 → RESP2 translation:** Bun.redis speaks RESP3 but the SDK expects RESP2-compatible JSON — normalize Maps to flat arrays, Booleans to 0/1, recursively
 - **Base64 encoding:** When `Upstash-Encoding: base64` header present, all string values in responses are base64-encoded (numbers, null pass through)
@@ -95,7 +96,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 
 **Blocking commands** (would hold the shared connection and starve other requests):
 - List/zset blocking pops: `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`
-- Blocking stream reads: `XREAD BLOCK`, `XREADGROUP BLOCK` (detection only inspects the options section before `STREAMS`, so a stream/group/consumer named `BLOCK` is allowed)
+- Blocking stream reads: `XREAD BLOCK`, `XREADGROUP BLOCK` (detection parses positionally like Redis: the scanner skips opaque `GROUP <group> <consumer>` values and `COUNT` arguments at any option position, including repeated/reordered GROUP headers — so a group/consumer named `STREAMS` cannot blind the scan, and a stream/group/consumer named `BLOCK` is still allowed)
 - Replication wait: `WAIT`, `WAITAOF`
 
 **Server admin / DoS vectors:**
@@ -158,9 +159,9 @@ When `Upstash-Encoding: base64` header is present:
 Each transaction gets a dedicated Bun.redis connection via `createDedicatedConnection()`:
 
 1. `const tx = await createDedicatedConnection()` — `new RedisClient` with `autoReconnect: false`
-2. `await tx.send("MULTI", [])`
-3. Queue each command: `await tx.send(cmd, args)` → "QUEUED"
-4. `const results = await tx.send("EXEC", [])` → result array
+2. `await withTimeout(tx.send("MULTI", []), 10_000)`
+3. Queue each command: `await withTimeout(tx.send(cmd, args), 10_000)` → "QUEUED"
+4. `const results = await withTimeout(tx.send("EXEC", []), 10_000)` → result array
 5. `tx.close()` in `finally` block
 
 This prevents the command interleaving bug (SRH issue #25) that occurs when concurrent transactions share a connection. `autoReconnect` is disabled because a silent reconnect mid-transaction would either run queued commands without `MULTI` context (corrupting state) or send them on a fresh connection (silent transaction abort).
@@ -172,10 +173,10 @@ Each subscription gets a dedicated Bun.redis connection via `createDedicatedConn
 1. Client sends `GET` or `POST /subscribe/my-channel`
 2. Server returns SSE response immediately via Hono's `streamSSE()`
 3. Async callback creates dedicated connection: `const sub = await createDedicatedConnection()`
-4. `await sub.subscribe(channel, listener)` — listener forwards each message as SSE
-5. SSE format: `data: subscribe,{channel},{count}\n\n` then `data: message,{channel},{content}\n\n`
+4. `await withTimeout(sub.subscribe(channel, listener), 10_000)` — listener forwards each message as SSE
+5. SSE format: `data: subscribe,{channel},{count}\n\n` then `data: message,{channel},{content}\n\n` (payload removes physical CR/LF whitespace from valid JSON and JSON-stringifies everything else — `normalizeMessagePayload` in `src/translate/pubsub.ts`, mirroring the SDK's `parseWithTryCatch` — so a payload can never split the SSE line)
 6. Blocks via `Promise.race([clientDisconnect, redisClose])` until stream ends
-7. `finally` block: unsubscribe + close dedicated connection (idempotent, safe for shutdown)
+7. `finally` block: close dedicated connection immediately (idempotent, safe for shutdown)
 
 Active subscriptions are tracked in a `Set` with exported `closeAllSubscriptions()` for graceful shutdown. The timeout middleware does not interfere — `streamSSE()` returns the Response synchronously, so `next()` resolves immediately.
 
@@ -233,8 +234,10 @@ All prefixed `UPREDIS_`:
 | Variable                   | Default                  | Required | Purpose                                        |
 | -------------------------- | ------------------------ | -------- | ---------------------------------------------- |
 | `UPREDIS_TOKEN`            | -                        | **Yes**  | Bearer token for API auth                      |
+| `UPREDIS_ALLOW_PLACEHOLDER_TOKEN` | `false`           | No       | Permit the well-known placeholder token at startup (default: refuse it) |
 | `UPREDIS_REDIS_URL`        | `redis://localhost:6379` | No       | Redis connection (any Redis 6+ / Valkey / KeyDB) |
-| `UPREDIS_REDIS_IMAGE`      | `redis:8-alpine`         | No       | Bundled backend image for `docker-compose.yml` — compose-only, NOT read by the app (e.g. `redis:7-alpine`, `valkey/valkey:9-alpine`) |
+| `UPREDIS_REDIS_PASSWORD`   | -                        | No       | Bundled backend password for `docker-compose.yml` — compose-only, interpolated into `--requirepass` + the default credentialed URL; optional for upgrade compatibility |
+| `UPREDIS_REDIS_APPENDONLY` | `no` | No | Compose-only AOF setting; enable only after the running-instance migration in `docs/persistence.md` |
 | `UPREDIS_PORT`             | `8080`                   | No       | HTTP listen port                               |
 | `UPREDIS_HOST`             | `0.0.0.0`                | No       | HTTP listen host                               |
 | `UPREDIS_LOG_LEVEL`        | `info`                   | No       | `debug`, `info`, `warn`, `error`               |
@@ -262,13 +265,13 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-570 tests across three tiers:
+617 tests across three tiers (Redis 8):
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unit**              | 290   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening, base64 encoding (incl. depth-aware "OK"), SSE ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation, fail-closed admin command policy, token-strength |
-| **Integration**       | 179   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers. Redis 6 skips five hash-field-expiry commands; Redis 7 skips the three Redis-8-only commands. A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
-| **SDK Compatibility** | 101   | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class, withscores/withvalues shape, literal-"OK" fidelity) |
+| **Unit**              | 324   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening and preserved ZMPOP nesting, base64 encoding (incl. depth-aware "OK"), SSE ordering + newline-safe payloads + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation (booleans coerced), stream-option gate parsing (including repeated GROUP headers), fail-closed admin command policy, token strength + placeholder refusal, config coercion traps |
+| **Integration**       | 189   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers incl. stalled-upstream (bounded awaits, shutdown) and idle-SSE (Bun idleTimeout) regression harnesses. Redis 6 skips five hash-field-expiry commands and ZMPOP; Redis 7 skips the three Redis-8-only commands. A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
+| **SDK Compatibility** | 104   | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class, newline payload round-trip, withscores/withvalues shape, literal-"OK" fidelity) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
 
@@ -281,7 +284,10 @@ Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM 
 
 ## Maintenance Workflowz
 
-Repeatable multi-agent audit workflows live in [docs/workflowz.md](docs/workflowz.md):
-pre-release audit, monthly ecosystem sweep, and advisory triage. CI
-(`.github/workflows/`) stays the deterministic backbone — run a workflowz when
-judgment work is needed (pre-tag audits, upstream drift review, alert triage).
+Harness-agnostic audit runbooks live in [docs/workflowz.md](docs/workflowz.md):
+pre-release audit, monthly ecosystem sweep, and advisory triage. They are pure
+instructions — any agent, model, or orchestrator can execute them — and write
+only `docs/audit/findings.md` (the live findings ledger) and
+`docs/audit/runs/` (one report per run). CI (`.github/workflows/`) stays the
+deterministic backbone — run a workflowz when judgment work is needed
+(pre-tag audits, upstream drift review, alert triage).

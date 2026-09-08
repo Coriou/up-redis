@@ -34,6 +34,8 @@ const WITHVALUES_COMMANDS = new Set(["HRANDFIELD"])
 // Without a count these return a single flat `[member, score]`, which must be left as-is.
 const COUNT_PAIR_COMMANDS = new Set(["ZPOPMIN", "ZPOPMAX"])
 
+// ZMPOP is nested in both RESP2 and RESP3: [key, [[member, score], ...]].
+// Preserve that shape; it has no SDK pair-flattening deserializer.
 function hasToken(args: string[], token: string): boolean {
 	return args.some((a) => typeof a === "string" && a.toUpperCase() === token)
 }
@@ -42,6 +44,7 @@ export function flattenScorePairs(command: string, args: string[], value: unknow
 	if (!Array.isArray(value)) return value
 
 	const cmd = command.toUpperCase()
+
 	let shouldFlatten = false
 	if (WITHSCORES_COMMANDS.has(cmd)) shouldFlatten = hasToken(args, "WITHSCORES")
 	else if (WITHVALUES_COMMANDS.has(cmd)) shouldFlatten = hasToken(args, "WITHVALUES")

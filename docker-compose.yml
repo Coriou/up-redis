@@ -2,27 +2,49 @@ services:
   up-redis:
     build: .
     expose:
-      - "8080"
+      - "${UPREDIS_PORT:-8080}"
+    # Explicit pass-through supports both .env and host/orchestrator variables.
+    # Only the documented app settings enter the proxy container.
     environment:
       UPREDIS_TOKEN: ${UPREDIS_TOKEN:?Set UPREDIS_TOKEN in .env}
-      UPREDIS_REDIS_URL: redis://redis:6379
+      UPREDIS_REDIS_URL: ${UPREDIS_REDIS_URL:-redis://:${UPREDIS_REDIS_PASSWORD:-}@redis:6379}
       UPREDIS_LOG_LEVEL: ${UPREDIS_LOG_LEVEL:-info}
+      UPREDIS_ALLOW_PLACEHOLDER_TOKEN: ${UPREDIS_ALLOW_PLACEHOLDER_TOKEN:-false}
+      UPREDIS_PORT: ${UPREDIS_PORT:-8080}
+      UPREDIS_HOST: ${UPREDIS_HOST:-0.0.0.0}
+      UPREDIS_LOG_FORMAT: ${UPREDIS_LOG_FORMAT:-json}
+      UPREDIS_SHUTDOWN_TIMEOUT: ${UPREDIS_SHUTDOWN_TIMEOUT:-30000}
+      UPREDIS_REQUEST_TIMEOUT: ${UPREDIS_REQUEST_TIMEOUT:-30000}
+      UPREDIS_METRICS: ${UPREDIS_METRICS:-false}
+      UPREDIS_MAX_BODY_SIZE: ${UPREDIS_MAX_BODY_SIZE:-10485760}
+      UPREDIS_MAX_PIPELINE_COMMANDS: ${UPREDIS_MAX_PIPELINE_COMMANDS:-1000}
+      UPREDIS_MAX_SUBSCRIPTIONS: ${UPREDIS_MAX_SUBSCRIPTIONS:-10000}
+      UPREDIS_ALLOW_DANGEROUS_COMMANDS: ${UPREDIS_ALLOW_DANGEROUS_COMMANDS:-false}
+      UPREDIS_BLOCKED_COMMANDS: ${UPREDIS_BLOCKED_COMMANDS:-}
+      UPREDIS_ALLOW_TOKEN_QUERY_PARAM: ${UPREDIS_ALLOW_TOKEN_QUERY_PARAM:-true}
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/livez"]
+      test: ["CMD", "curl", "-f", "http://localhost:${UPREDIS_PORT:-8080}/livez"]
       interval: 10s
       timeout: 5s
       retries: 3
 
   redis:
-    image: ${UPREDIS_REDIS_IMAGE:-redis:8-alpine}
+    # Digest = redis:8-alpine fetched 2026-09-07; override UPREDIS_REDIS_IMAGE to float or switch engines (e.g. valkey/valkey:9-alpine).
+    image: ${UPREDIS_REDIS_IMAGE:-redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576}
+    # Optional for upgrade compatibility; set a strong password on new deployments.
+    environment:
+      UPREDIS_REDIS_PASSWORD: ${UPREDIS_REDIS_PASSWORD:-}
+      # Enable only after a running-instance migration (docs/persistence.md).
+      UPREDIS_REDIS_APPENDONLY: ${UPREDIS_REDIS_APPENDONLY:-no}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$UPREDIS_REDIS_PASSWORD\" --appendonly \"$$UPREDIS_REDIS_APPENDONLY\" --appendfsync everysec"]
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$UPREDIS_REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 5

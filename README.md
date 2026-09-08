@@ -212,7 +212,10 @@ All environment variables are prefixed `UPREDIS_`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UPREDIS_TOKEN` | — | **Required.** Bearer token for API authentication |
+| `UPREDIS_ALLOW_PLACEHOLDER_TOKEN` | `false` | Startup refuses well-known placeholder `UPREDIS_TOKEN` values (e.g. the `.env.example` default). Set `true` to explicitly accept one |
 | `UPREDIS_REDIS_URL` | `redis://localhost:6379` | Redis connection URL — `redis://`, `rediss://` (TLS), `valkey://`, `valkeys://` (any Redis 6+, Valkey, KeyDB) |
+| `UPREDIS_REDIS_PASSWORD` | — | Bundled backend password (compose-only, not read by the app): interpolated into the backend's `--requirepass` and the default credentialed `redis://:pw@redis:6379` URL. Optional for upgrade compatibility; strongly recommended for new deployments. Generate a URL-safe hex secret with `openssl rand -hex 32` |
+| `UPREDIS_REDIS_APPENDONLY` | `no` | Bundled backend AOF (compose-only, `yes` enables every-second fsync). Migrate existing data first using [docs/persistence.md](docs/persistence.md) |
 | `UPREDIS_PORT` | `8080` | HTTP listen port |
 | `UPREDIS_HOST` | `0.0.0.0` | HTTP listen host |
 | `UPREDIS_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
@@ -232,9 +235,10 @@ All environment variables are prefixed `UPREDIS_`:
 up-redis is designed to run behind a reverse proxy (Coolify, Traefik, nginx, Caddy) on a private network:
 
 - **Transport:** up-redis serves plain HTTP. **Terminate TLS at your reverse proxy** — don't expose the port directly to the internet. The production `docker-compose.yml` uses Docker `expose` (network-internal) rather than `ports` for exactly this reason.
-- **Authentication:** the bearer token is compared in constant time (SHA-256 + `timingSafeEqual`, which also hides the token length). A startup warning fires if `UPREDIS_TOKEN` is short, low-entropy, or a known placeholder — use a long random secret, e.g. `openssl rand -hex 32`.
+- **Authentication:** the bearer token is compared in constant time (SHA-256 + `timingSafeEqual`, which also hides the token length). Startup **refuses well-known placeholder tokens** (e.g. the `.env.example` default) unless `UPREDIS_ALLOW_PLACEHOLDER_TOKEN=true` explicitly accepts the risk, and a warning fires for short or low-entropy tokens — use a long random secret, e.g. `openssl rand -hex 32`.
 - **Token in URLs:** the `?_token=` query parameter (Upstash compat) is convenient but leaks the secret into reverse-proxy/access logs and browser history. Prefer the `Authorization` header, and set `UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false` to reject query-param auth entirely.
 - **`/metrics` is unauthenticated** (so Prometheus can scrape it). Only enable it (`UPREDIS_METRICS=true`) when the port is reachable solely by your monitoring stack, or restrict `/metrics` at the reverse proxy.
+- **Bundled backend:** set `UPREDIS_REDIS_PASSWORD` to enable `requirepass`; Compose wires the default `UPREDIS_REDIS_URL` to it. An unset password preserves existing deployments and leaves Redis unauthenticated on its private network. If you override `UPREDIS_REDIS_URL`, configure its credentials separately. External/managed backends: enforce auth (and ideally ACLs) at the backend itself.
 - **Command surface:** destructive/DoS-prone commands (`KEYS`, `FLUSHALL`, `FLUSHDB`, `SWAPDB`) are blocked by default; harden further with `UPREDIS_BLOCKED_COMMANDS`. These blocks are an accident-prevention net, **not a security boundary** — Lua scripting can invoke blocked commands (see below), so treat anyone holding a token as able to run arbitrary Redis commands. For defense in depth, also restrict commands with [Redis ACLs](https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/) on the backing server.
 - **Lua scripting:** `EVAL`/`EVALSHA`/`FCALL`/`FUNCTION`/`SCRIPT` stay enabled by default for drop-in SDK compatibility (`redis.eval()` is a first-class SDK method). But a script can call any command — including the dangerous-by-default ones — and a tight loop can busy the shared connection. If untrusted clients can obtain a token, block scripting:
 
@@ -361,9 +365,14 @@ The compatibility tests use the actual `@upstash/redis` TypeScript SDK, exercisi
 ### Docker Compose (standalone)
 
 ```bash
-cp .env.example .env     # Set UPREDIS_TOKEN
+cp .env.example .env     # Set UPREDIS_TOKEN and UPREDIS_REDIS_PASSWORD
 docker compose up -d     # Starts up-redis + Redis
 ```
+
+The named volume preserves files across container recreation; the bundled backend
+keeps Redis's default RDB snapshot policy. It does not enable AOF or provide
+off-host backups. For durable application records, follow the reviewed migration
+and restore procedure in [docs/persistence.md](docs/persistence.md).
 
 ### Side-by-side with up-vector
 

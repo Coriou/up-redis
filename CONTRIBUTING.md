@@ -15,9 +15,8 @@ You need Bun 1.3.6 or newer and a Redis-compatible backend.
 
 ```bash
 bun install --frozen-lockfile
-cp .env.example .env
-docker compose up -d redis
-bun run dev
+cp .env.example .env     # Replace UPREDIS_TOKEN; set a URL-safe UPREDIS_REDIS_PASSWORD
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
 Use a separate terminal for the integration suites:

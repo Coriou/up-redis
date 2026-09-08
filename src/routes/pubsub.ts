@@ -15,6 +15,10 @@ import {
 	formatSubscribeEvent,
 } from "../translate/pubsub"
 import { createSlotLimiter } from "../util/slot-limiter"
+import { withTimeout } from "../util/timeout"
+
+// Bound subscription setup after the dedicated TCP connection is established.
+const COMMAND_TIMEOUT_MS = 10_000
 
 type ActiveSubscription = {
 	target: string
@@ -192,7 +196,7 @@ async function handleSubscribe(c: Context) {
 
 			let count: number
 			try {
-				count = await sub.subscribe(channel, listener)
+				count = await withTimeout(sub.subscribe(channel, listener), COMMAND_TIMEOUT_MS, "SUBSCRIBE")
 			} catch (err) {
 				log.warn("pubsub subscribe failed", {
 					requestId: c.get("requestId"),
@@ -238,11 +242,8 @@ async function handleSubscribe(c: Context) {
 			if (keepaliveTimer) clearInterval(keepaliveTimer)
 			activeSubscriptions.delete(entry)
 			subscriptionLimiter.release()
-			try {
-				await sub.unsubscribe(channel)
-			} catch {
-				// Connection might already be closed; nothing to do.
-			}
+			// Closing a dedicated connection removes its Redis subscriptions. Do not
+			// wait for UNSUBSCRIBE: teardown must also work with a stalled upstream.
 			try {
 				sub.close()
 			} catch {
@@ -405,9 +406,6 @@ export async function closeAllSubscriptions(): Promise<void> {
 				entry.stream.abort()
 			} catch {}
 			if (entry.redis) {
-				try {
-					await entry.redis.unsubscribe(entry.target)
-				} catch {}
 				try {
 					entry.redis.close()
 				} catch {}

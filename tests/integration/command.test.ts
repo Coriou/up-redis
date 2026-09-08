@@ -58,6 +58,15 @@ describe("POST / (single command)", () => {
 		expect(data).toEqual({ result: "OK" })
 	})
 
+	// @upstash/redis' defaultSerializer passes booleans through raw (only other types
+	// are JSON-stringified), and Upstash accepts them — SET key true stores "true".
+	test("boolean arguments are coerced to true/false strings", async () => {
+		const key = k()
+		const { status } = await api("POST", "/", ["SET", key, true])
+		expect(status).toBe(200)
+		expect(await cmd("GET", key)).toBe("true")
+	})
+
 	test("SET + GET roundtrip", async () => {
 		const key = k()
 		await cmd("SET", key, "hello")
@@ -101,8 +110,10 @@ describe("POST / (single command)", () => {
 		expect(result).toBe("-inf")
 	})
 
-	// Input validation: non-(string|number) args must be rejected with 400, not
-	// silently coerced (String({}) → "[object Object]", String(null) → "null").
+	// Input validation: non-(string|number|boolean) args must be rejected with 400, not
+	// silently coerced (String({}) → "[object Object]", String(null) → "null"). Booleans
+	// are accepted — the SDK's defaultSerializer passes them through raw and Upstash
+	// accepts them (SET key true stores the string "true").
 	test("rejects an object argument with 400", async () => {
 		const { status, data } = await api("POST", "/", ["SET", k(), { a: 1 }])
 		expect(status).toBe(400)
@@ -111,11 +122,6 @@ describe("POST / (single command)", () => {
 
 	test("rejects a null argument with 400", async () => {
 		const { status } = await api("POST", "/", ["SET", k(), null])
-		expect(status).toBe(400)
-	})
-
-	test("rejects a boolean argument with 400", async () => {
-		const { status } = await api("POST", "/", ["SET", k(), true])
 		expect(status).toBe(400)
 	})
 
@@ -526,6 +532,48 @@ describe("POST / (blocked commands)", () => {
 		expect((data as { error: string }).error).toContain("XREADGROUP BLOCK")
 	})
 
+	// The GATE-2 repro: a group literally named STREAMS sits at args[1]. A gate that
+	// scans for the first STREAMS token would see an empty options slice, let a real
+	// BLOCK 0 through, and wedge the shared auto-pipelined connection indefinitely.
+	test("XREADGROUP BLOCK with a group named STREAMS is rejected and the connection stays usable", async () => {
+		const { status, data } = await api("POST", "/", [
+			"XREADGROUP",
+			"GROUP",
+			"STREAMS",
+			"c",
+			"BLOCK",
+			"0",
+			"STREAMS",
+			"k",
+			"$",
+		])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("XREADGROUP BLOCK")
+
+		// A follow-up PING must succeed — the shared connection must not be wedged.
+		const ping = await api("POST", "/", ["PING"])
+		expect(ping.status).toBe(200)
+		expect(ping.data).toEqual({ result: "PONG" })
+	})
+
+	test("XREADGROUP with a group named STREAMS passes the gate to Redis", async () => {
+		const key = k("stream")
+		await cmd("XGROUP", "CREATE", key, "STREAMS", "$", "MKSTREAM")
+		const { status } = await api("POST", "/", [
+			"XREADGROUP",
+			"GROUP",
+			"STREAMS",
+			"c",
+			"STREAMS",
+			key,
+			">",
+		])
+		// Not rejected by our gate: Redis answers with an empty read (200).
+		expect(status).toBe(200)
+		const ping = await api("POST", "/", ["PING"])
+		expect(ping.status).toBe(200)
+	})
+
 	test("SHUTDOWN is blocked (would kill the Redis server)", async () => {
 		const { status, data } = await api("POST", "/", ["SHUTDOWN"])
 		expect(status).toBe(400)
@@ -648,4 +696,50 @@ describe("POST / (blocked commands)", () => {
 		expect(status).toBe(200)
 		expect((data as { result: string }).result).toBe("PONG")
 	})
+})
+
+// Redis 7 introduced ZMPOP. Its RESP2 reply retains both array levels.
+const { data: zmpopSupport } = await api("POST", "/", ["COMMAND", "INFO", "ZMPOP"])
+const supportsZmPop = Array.isArray((zmpopSupport as { result?: unknown[] }).result?.[0])
+test.skipIf(!supportsZmPop)("ZMPOP keeps key and nested score pairs", async () => {
+	const key = k("zmpop")
+	for (const route of ["/", "/pipeline", "/multi-exec"]) {
+		await cmd("ZADD", key, 1, "one", 2, "two")
+		const command = ["ZMPOP", 1, key, "MIN", "COUNT", 2]
+		const { status, data } = await api("POST", route, route === "/" ? command : [command])
+		expect(status).toBe(200)
+		const envelope = route === "/" ? data : (data as unknown[])[0]
+		expect(envelope).toEqual({
+			result: [
+				key,
+				[
+					["one", 1],
+					["two", 2],
+				],
+			],
+		})
+	}
+})
+
+test("repeated GROUP cannot hide BLOCK on any command endpoint", async () => {
+	const command = [
+		"XREADGROUP",
+		"GROUP",
+		"g",
+		"c",
+		"GROUP",
+		"STREAMS",
+		"c",
+		"BLOCK",
+		"1",
+		"STREAMS",
+		"missing",
+		">",
+	]
+	for (const route of ["/", "/pipeline", "/multi-exec"]) {
+		const { data } = await api("POST", route, route === "/" ? command : [command])
+		const envelope = route === "/pipeline" ? (data as unknown[])[0] : data
+		expect((envelope as { error: string }).error).toContain("XREADGROUP BLOCK")
+	}
+	expect(await cmd("PING")).toBe("PONG")
 })

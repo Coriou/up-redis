@@ -1,5 +1,7 @@
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { api, cmd, testKey } from "./setup"
+import { type SpawnedServer, spawnServer } from "./spawn-server"
+import { type StallableRedisProxy, startStallableRedisProxy } from "./stallable-redis"
 
 const keys: string[] = []
 function k(prefix = "tx") {
@@ -116,4 +118,67 @@ describe("POST /multi-exec", () => {
 		// GET should succeed with the value set by the first command
 		expect(results[2].result).toBe("ok-value")
 	})
+})
+
+describe("POST /multi-exec against a stalled upstream (CONC-4)", () => {
+	let proxy: StallableRedisProxy
+	let server: SpawnedServer
+
+	beforeAll(async () => {
+		proxy = await startStallableRedisProxy()
+		server = await spawnServer({
+			UPREDIS_REDIS_URL: `redis://127.0.0.1:${proxy.port}`,
+		})
+	}, 30_000)
+
+	afterAll(() => {
+		server?.close()
+		proxy?.close()
+	})
+
+	async function postMultiExec(key: string): Promise<{ status: number; body: unknown }> {
+		const res = await fetch(`${server.baseUrl}/multi-exec`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${server.token}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify([["SET", key, "v"]]),
+		})
+		return { status: res.status, body: await res.json() }
+	}
+
+	test("stalled MULTI fails with an error envelope in ~10s instead of hanging forever", async () => {
+		// Sanity barrier: through the live relay the same request succeeds.
+		const healthy = await postMultiExec(k("stall-ok"))
+		expect(healthy.status).toBe(200)
+
+		proxy.stallOnCommand("MULTI")
+		const started = Date.now()
+		const { status, body } = await postMultiExec(k("stall-hang"))
+		const elapsed = Date.now() - started
+
+		// The relay completes HELLO before black-holing MULTI. This proves the
+		// post-handshake command deadline, not the existing connect timeout.
+		expect(status).toBe(400)
+		expect(body).toEqual({ error: "MULTI timed out after 10000ms" })
+		const cleanupDeadline = Date.now() + 1000
+		while (proxy.clientCount > 1 && Date.now() < cleanupDeadline) await Bun.sleep(10)
+		expect(proxy.clientCount).toBe(1) // only the shared connection remains
+
+		expect(elapsed).toBeLessThan(15_000)
+	}, 20_000)
+
+	test("proxy still serves requests against a healthy Redis after the stall", async () => {
+		proxy.thaw()
+		// The bounded failure released the suspended handler and its finally
+		// closed the dedicated connection, so a fresh transaction works again.
+		const { status, body } = await postMultiExec(k("stall-recovered"))
+		expect(status).toBe(200)
+		if (!Array.isArray(body)) throw new Error(`unexpected body: ${JSON.stringify(body)}`)
+		expect(body[0].result).toBe("OK")
+
+		const live = await fetch(`${server.baseUrl}/livez`)
+		expect(live.status).toBe(200)
+	}, 20_000)
 })

@@ -123,4 +123,20 @@ describe("flattenScorePairs", () => {
 			)
 		})
 	})
+
+	describe("ZMPOP RESP2 nesting", () => {
+		test("preserves key and member-score tuples", () => {
+			const nested = [
+				"key",
+				[
+					["a", 1],
+					["b", 2],
+				],
+			]
+			expect(flattenScorePairs("ZMPOP", ["1", "key", "MIN", "COUNT", "2"], nested)).toBe(nested)
+		})
+		test("preserves a missing-key null", () => {
+			expect(flattenScorePairs("ZMPOP", ["1", "key", "MIN"], null)).toBe(null)
+		})
+	})
 })

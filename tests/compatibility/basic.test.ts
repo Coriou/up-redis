@@ -143,3 +143,18 @@ describe("SDK: basic operations", () => {
 		expect(val).toBe("first")
 	})
 })
+
+test("SDK raw boolean arguments round-trip through commands, pipeline, and transaction", async () => {
+	const key = k("boolean")
+	await redis.set(key, true)
+	expect(await redis.get<boolean>(key)).toBe(true)
+	const pipe = redis.pipeline()
+	pipe.set(key, false).get(key)
+	expect(await pipe.exec()).toEqual(["OK", false])
+	const tx = redis.multi()
+	tx.set(key, true).get(key)
+	expect(await tx.exec()).toEqual(["OK", true])
+	const hash = k("boolean-hash")
+	await redis.hset(hash, { enabled: false })
+	expect(await redis.hget<boolean>(hash, "enabled")).toBe(false)
+})

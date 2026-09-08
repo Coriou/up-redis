@@ -9,7 +9,7 @@ services:
     # Expose to host for local development. Production compose uses `expose`
     # only (for Coolify/reverse-proxy deployment).
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${UPREDIS_PORT:-8080}:${UPREDIS_PORT:-8080}"
     environment:
       UPREDIS_LOG_LEVEL: debug
       UPREDIS_LOG_FORMAT: text
@@ -19,9 +19,9 @@ services:
           "CMD",
           "bun",
           "-e",
-          "fetch('http://localhost:8080/livez').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+          "fetch('http://localhost:${UPREDIS_PORT:-8080}/livez').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
         ]
 
   redis:
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"

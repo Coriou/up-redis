@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
 import { AUTH, cmd, testKey } from "./setup"
+import { type SpawnedServer, spawnServer } from "./spawn-server"
+import { type StallableRedisProxy, startStallableRedisProxy } from "./stallable-redis"
 
 const BASE_URL = process.env.UPREDIS_TEST_URL ?? "http://localhost:8080"
 
@@ -131,7 +133,7 @@ describe("GET/POST /subscribe/:channel", () => {
 		await cmd("PUBLISH", channel, "hello")
 		await sub.waitForEvents(2) // subscribe + message
 
-		expect(sub.events[1]).toBe(`message,${channel},hello`)
+		expect(sub.events[1]).toBe(`message,${channel},"hello"`)
 
 		sub.controller.abort()
 	})
@@ -150,7 +152,7 @@ describe("GET/POST /subscribe/:channel", () => {
 		expect(await res.json()).toEqual({ result: 1 })
 
 		await sub.waitForEvents(2)
-		expect(sub.events[1]).toBe(`message,${channel},from-path`)
+		expect(sub.events[1]).toBe(`message,${channel},"from-path"`)
 
 		sub.controller.abort()
 	})
@@ -168,7 +170,7 @@ describe("GET/POST /subscribe/:channel", () => {
 		await sub.waitForEvents(6) // 1 subscribe + 5 messages
 
 		for (let i = 0; i < 5; i++) {
-			expect(sub.events[i + 1]).toBe(`message,${channel},msg-${i}`)
+			expect(sub.events[i + 1]).toBe(`message,${channel},"msg-${i}"`)
 		}
 
 		sub.controller.abort()
@@ -183,7 +185,7 @@ describe("GET/POST /subscribe/:channel", () => {
 		await cmd("PUBLISH", channel, "a,b,c")
 		await sub.waitForEvents(2)
 
-		expect(sub.events[1]).toBe(`message,${channel},a,b,c`)
+		expect(sub.events[1]).toBe(`message,${channel},"a,b,c"`)
 
 		sub.controller.abort()
 	})
@@ -262,8 +264,8 @@ describe("GET/POST /subscribe/:channel", () => {
 		await sub1.waitForEvents(2)
 		await sub2.waitForEvents(2)
 
-		expect(sub1.events[1]).toBe(`message,${channel},broadcast`)
-		expect(sub2.events[1]).toBe(`message,${channel},broadcast`)
+		expect(sub1.events[1]).toBe(`message,${channel},"broadcast"`)
+		expect(sub2.events[1]).toBe(`message,${channel},"broadcast"`)
 
 		sub1.controller.abort()
 		sub2.controller.abort()
@@ -288,8 +290,8 @@ describe("GET/POST /subscribe/:channel", () => {
 		await cmd("PUBLISH", ch2, "only-for-ch2")
 		await sub2.waitForEvents(2)
 
-		expect(sub1.events[1]).toBe(`message,${ch1},only-for-ch1`)
-		expect(sub2.events[1]).toBe(`message,${ch2},only-for-ch2`)
+		expect(sub1.events[1]).toBe(`message,${ch1},"only-for-ch1"`)
+		expect(sub2.events[1]).toBe(`message,${ch2},"only-for-ch2"`)
 		expect(sub2.events.length).toBe(2) // subscribe confirmation + own message — no ch1 leak
 
 		sub1.controller.abort()
@@ -305,27 +307,27 @@ describe("GET/POST /subscribe/:channel", () => {
 		await cmd("PUBLISH", channel, "")
 		await sub.waitForEvents(2)
 
-		expect(sub.events[1]).toBe(`message,${channel},`)
+		expect(sub.events[1]).toBe(`message,${channel},""`)
 
 		sub.controller.abort()
 	})
 
-	test("message with newlines splits into multiple SSE data lines", async () => {
+	test("message with newlines is delivered as a single SSE event", async () => {
 		const channel = ch()
 		const sub = tracked(sseSubscribe(channel))
 
 		await sub.waitForEvents(1)
 
 		await cmd("PUBLISH", channel, "line1\nline2\nline3")
+		await sub.waitForEvents(2) // subscribe + one message event
 
-		// SSE spec: multi-line data gets split into separate "data: " lines.
-		// Both the Upstash SDK and standard SSE readers see each as a separate event.
-		// This matches Upstash's behavior — the protocol is inherently line-based.
-		await sub.waitForEvents(4) // subscribe + 3 data lines
-
-		expect(sub.events[1]).toBe(`message,${channel},line1`)
-		expect(sub.events[2]).toBe("line2")
-		expect(sub.events[3]).toBe("line3")
+		// The payload is JSON-escaped before it is written to the SSE stream, so the
+		// data field stays a single line and line-based readers can never split it.
+		// JSON.parse of the payload restores the exact original string.
+		expect(sub.events.length).toBe(2)
+		const payload = sub.events[1].slice(`message,${channel},`.length)
+		expect(sub.events[1]).toBe(`message,${channel},"line1\\nline2\\nline3"`)
+		expect(JSON.parse(payload)).toBe("line1\nline2\nline3")
 
 		sub.controller.abort()
 	})
@@ -348,7 +350,7 @@ describe("GET/POST /subscribe/:channel", () => {
 		await cmd("PUBLISH", channel, "still-alive")
 		await sub.waitForEvents(2)
 
-		expect(sub.events[1]).toBe(`message,${channel},still-alive`)
+		expect(sub.events[1]).toBe(`message,${channel},"still-alive"`)
 
 		sub.controller.abort()
 	})
@@ -382,7 +384,7 @@ describe("GET/POST /subscribe/:channel", () => {
 			// Parallel publishes don't guarantee order — verify all messages arrived
 			const messages = new Set(sub.events.slice(1))
 			for (let i = 0; i < 50; i++) {
-				expect(messages.has(`message,${channel},msg-${i}`)).toBe(true)
+				expect(messages.has(`message,${channel},"msg-${i}"`)).toBe(true)
 			}
 		}
 
@@ -489,4 +491,105 @@ describe("GET/POST /psubscribe/:pattern", () => {
 		})
 		expect(res.status).toBe(401)
 	})
+})
+
+describe("graceful shutdown with a stalled subscription upstream (CONC-7)", () => {
+	let proxy: StallableRedisProxy
+	let server: SpawnedServer
+
+	// 15s shutdown budget: the bounded UNSUBSCRIBE (10s) must reject and let the
+	// clean path finish BEFORE the forced exit(1) timer at 15s. With a shorter
+	// budget the forced timer would win even after the fix, masking the
+	// regression; with an unbounded UNSUBSCRIBE (the old behavior) the clean
+	// path can never finish and the forced exit always fires.
+	beforeAll(async () => {
+		proxy = await startStallableRedisProxy()
+		server = await spawnServer({
+			UPREDIS_REDIS_URL: `redis://127.0.0.1:${proxy.port}`,
+			UPREDIS_SHUTDOWN_TIMEOUT: "15000",
+		})
+	}, 30_000)
+
+	afterAll(() => {
+		server?.close()
+		proxy?.close()
+	})
+
+	test("client disconnect closes its socket even when Redis is stalled", async () => {
+		const controller = new AbortController()
+		const res = await fetch(`${server.baseUrl}/subscribe/stall-disconnect`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${server.token}` },
+			signal: controller.signal,
+		})
+		const reader = res.body?.getReader()
+		if (!reader) throw new Error("no SSE body")
+		await reader.read() // subscription confirmed, dedicated connection registered
+		expect(proxy.clientCount).toBe(2)
+		proxy.stall()
+		controller.abort()
+		const deadline = Date.now() + 2000
+		while (proxy.clientCount > 1 && Date.now() < deadline) await Bun.sleep(10)
+		expect(proxy.clientCount).toBe(1)
+		proxy.thaw()
+	})
+
+	test("stalled SUBSCRIBE is bounded after a completed handshake", async () => {
+		proxy.stallOnCommand("SUBSCRIBE")
+		const controller = new AbortController()
+		try {
+			const res = await fetch(`${server.baseUrl}/subscribe/stall-setup`, {
+				method: "POST",
+				headers: { Authorization: `Bearer ${server.token}` },
+				signal: controller.signal,
+			})
+			// A setup failure closes the stream without sending a confirmation.
+			expect(await res.text()).toBe("")
+			const deadline = Date.now() + 1000
+			while (proxy.clientCount > 1 && Date.now() < deadline) await Bun.sleep(10)
+			expect(proxy.clientCount).toBe(1)
+		} finally {
+			controller.abort()
+			proxy.thaw()
+		}
+	}, 15000)
+
+	test("SIGTERM exits cleanly even when the unsubscribe would stall", async () => {
+		// Establish a working subscription through the live relay — the
+		// subscribe confirmation is a deterministic barrier that the entry is
+		// registered and the upstream subscribe completed — then stall the
+		// upstream so the shutdown-time UNSUBSCRIBE can never get a reply.
+		const controller = new AbortController()
+		const res = await fetch(`${server.baseUrl}/subscribe/stall-shutdown`, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${server.token}` },
+			signal: controller.signal,
+		})
+		expect(res.ok).toBe(true)
+		const body = res.body
+		if (!body) throw new Error("no response body")
+		const reader = body.getReader()
+		const decoder = new TextDecoder()
+		let buffer = ""
+		while (!buffer.split("\n").some((line) => line.startsWith("data: "))) {
+			const { done, value } = await reader.read()
+			if (done) throw new Error("SSE stream closed before subscribe confirmation")
+			buffer += decoder.decode(value, { stream: true })
+		}
+
+		proxy.stall()
+		const started = Date.now()
+		server.proc.kill("SIGTERM")
+		const exitCode = await server.proc.exited
+		const elapsed = Date.now() - started
+		controller.abort()
+
+		// Assertion used: the clean shutdown path completes — exit code 0 — and
+		// the process does NOT hang past the 15s shutdown timeout. Before the
+		// fix the unbounded per-entry UNSUBSCRIBE burned the full budget and
+		// degraded to the forced exit(1) (post-fix the bounded unsubscribe
+		// rejects at ~10s and the clean path reaches exit(0)).
+		expect(exitCode).toBe(0)
+		expect(elapsed).toBeLessThan(15_000)
+	}, 30_000)
 })

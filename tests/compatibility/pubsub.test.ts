@@ -97,6 +97,20 @@ async function readSSEMessages(
 	return { events, waitForEvents }
 }
 
+/**
+ * Mirror the SDK's parseWithTryCatch (chunk-K7RP6Y36.mjs:4315): the server
+ * JSON-stringifies non-JSON payloads before writing them to the SSE stream,
+ * so a consumer decoding raw `data:` lines must try JSON.parse first and fall
+ * back to the raw string — exactly what the SDK Subscriber does.
+ */
+function parseSsePayload(raw: string): string {
+	try {
+		return JSON.parse(raw) as string
+	} catch {
+		return raw
+	}
+}
+
 // Track SDK subscribers for cleanup
 const subscribers: Array<{ unsubscribe: () => Promise<void> }> = []
 
@@ -352,8 +366,10 @@ describe("SDK compatibility: PubSub (raw SSE)", () => {
 		// Parse the message event
 		const msgEvent = events[1]
 		expect(msgEvent).toStartWith("message,")
-		const content = msgEvent.slice(msgEvent.indexOf(",", msgEvent.indexOf(",") + 1) + 1)
-		// SDK sends string values as-is (no JSON wrapping)
+		const content = parseSsePayload(
+			msgEvent.slice(msgEvent.indexOf(",", msgEvent.indexOf(",") + 1) + 1),
+		)
+		// Non-JSON payloads are JSON-quoted on the wire; parse restores the string
 		expect(content).toBe("from-sdk")
 
 		controller.abort()
@@ -411,8 +427,8 @@ describe("SDK compatibility: PubSub (raw SSE)", () => {
 			const firstComma = event.indexOf(",")
 			const secondComma = event.indexOf(",", firstComma + 1)
 			const rawContent = event.slice(secondComma + 1)
-			// SDK sends strings as-is (no JSON wrapping)
-			receivedMessages.push(rawContent)
+			// Non-JSON payloads are JSON-quoted on the wire; parse restores the string
+			receivedMessages.push(parseSsePayload(rawContent))
 		}
 
 		expect(receivedMessages).toEqual(["chunk-1", "chunk-2", "chunk-3"])

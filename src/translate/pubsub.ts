@@ -10,7 +10,7 @@ export function formatPatternSubscribeEvent(pattern: string, count: number): str
 
 /** Format an SSE message event (Upstash protocol) */
 export function formatMessageEvent(channel: string, message: string): string {
-	return `message,${channel},${message}`
+	return `message,${channel},${normalizeMessagePayload(message)}`
 }
 
 /** Format an SSE pattern message event (Upstash protocol) */
@@ -19,13 +19,23 @@ export function formatPatternMessageEvent(
 	channel: string,
 	message: string,
 ): string {
-	return `pmessage,${pattern},${channel},${formatPatternMessagePayload(message)}`
+	return `pmessage,${pattern},${channel},${normalizeMessagePayload(message)}`
 }
 
-function formatPatternMessagePayload(message: string): string {
+/**
+ * Normalize a PubSub message payload for SSE transport.
+ *
+ * Valid JSON keeps its values and numeric lexemes; physical CR/LF whitespace is
+ * removed (JSON strings cannot contain unescaped CR/LF). Other text is
+ * JSON-stringified. This
+ * guarantees the formatted event is a single line (newlines are escaped), so
+ * SSE framing can never split a payload and the SDK's JSON.parse restores the
+ * exact original string.
+ */
+function normalizeMessagePayload(message: string): string {
 	try {
 		JSON.parse(message)
-		return message
+		return message.replace(/[\r\n]/g, "")
 	} catch {
 		return JSON.stringify(message)
 	}

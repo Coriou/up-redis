@@ -277,21 +277,16 @@ export function checkBlockedCommand(
 		}
 	}
 
-	// Upstash REST does not support blocking stream reads. They would also hold the
-	// shared proxy connection open until a stream receives data or the client timeout
-	// fires. The BLOCK token only carries blocking semantics in the options section:
-	// before the STREAMS keyword, and — for XREADGROUP — after the "GROUP <group>
-	// <consumer>" header. Scanning the whole arg list would wrongly reject a stream,
-	// group, or consumer literally named "BLOCK".
+	// Redis accepts GROUP headers anywhere in the option list, including repeated
+	// headers. Skip their opaque group/consumer values before recognizing STREAMS,
+	// otherwise a group named STREAMS can hide a later BLOCK and wedge the connection.
 	if (upper === "XREAD" || upper === "XREADGROUP") {
-		const streamsIdx = args.findIndex((arg) => arg.toUpperCase() === "STREAMS")
-		const optionsEnd = streamsIdx === -1 ? args.length : streamsIdx
-		const optionsStart = upper === "XREADGROUP" ? 3 : 0
-		const hasBlockOption = args
-			.slice(optionsStart, optionsEnd)
-			.some((arg) => arg.toUpperCase() === "BLOCK")
-		if (hasBlockOption) {
-			return `${upper} BLOCK is not allowed — ${BLOCKING_REASON}`
+		for (let i = 0; i < args.length; i++) {
+			const option = args[i]?.toUpperCase()
+			if (option === "BLOCK") return `${upper} BLOCK is not allowed — ${BLOCKING_REASON}`
+			if (option === "STREAMS") break
+			if (option === "GROUP" && upper === "XREADGROUP") i += 2
+			else if (option === "COUNT") i += 1
 		}
 	}
 
@@ -314,12 +309,14 @@ export function checkBlockedCommand(
  * Validate and normalize a raw command array (from a JSON request body) into a
  * Redis command name + string arguments.
  *
- * Over the Upstash wire, command arguments arrive as JSON strings or numbers —
- * the SDK pre-stringifies booleans/objects/arrays/null before sending. We accept
- * `string | number` (numbers are coerced, e.g. `EXPIRE key 100`) and reject
- * anything else with a descriptive error rather than silently coercing it:
- * `String({})` would write the literal "[object Object]" into Redis and
- * `String(null)` the literal "null".
+ * Over the Upstash wire, command arguments arrive as JSON strings, numbers, or
+ * booleans: the SDK's defaultSerializer passes strings/numbers/booleans through
+ * raw and JSON-stringifies only other types (verified in @upstash/redis 1.38.2),
+ * and Upstash accepts the raw booleans — `SET key true` stores the string "true".
+ * We therefore accept `string | number | boolean` (numbers coerced via String(),
+ * booleans to "true"/"false") and reject anything else with a descriptive error
+ * rather than silently coercing it: `String({})` would write the literal
+ * "[object Object]" into Redis and `String(null)` the literal "null".
  *
  * Throws on invalid input; callers map the error to a 400 response.
  */
@@ -341,9 +338,11 @@ export function parseCommandArray(raw: readonly unknown[]): {
 			args[i - 1] = value
 		} else if (typeof value === "number" && Number.isFinite(value)) {
 			args[i - 1] = String(value)
+		} else if (typeof value === "boolean") {
+			args[i - 1] = value ? "true" : "false"
 		} else {
 			throw new Error(
-				`Invalid argument at position ${i}: expected a string or number, got ${describeArgType(value)}`,
+				`Invalid argument at position ${i}: expected a string, number, or boolean, got ${describeArgType(value)}`,
 			)
 		}
 	}

@@ -36,6 +36,14 @@ async function main(): Promise<void> {
 		port: config.port,
 		hostname: config.host,
 		maxRequestBodySize: config.maxBodySize,
+		// Bun's default idleTimeout (10s) tears down quiet SSE subscriptions:
+		// the keep-alive comment interval (15s, KEEPALIVE_INTERVAL_MS in
+		// routes/pubsub.ts) never fires inside the idle window, so every
+		// idle-channel subscriber is killed after ~10s and loses subscriber
+		// state plus any messages published during the reconnect gap. 255 is
+		// Bun's max (seconds): it preserves idle-socket reaping for plain HTTP
+		// keep-alive connections while SSE keep-alives reset the timer.
+		idleTimeout: 255,
 	})
 
 	log.info("server started", {

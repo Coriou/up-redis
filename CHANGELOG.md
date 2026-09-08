@@ -11,6 +11,13 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ### Security
 
+- Reject blocking stream reads even when repeated/reordered GROUP headers contain
+  reserved-word names, preserving shared-connection availability.
+- Refuse published placeholder API tokens at startup unless explicitly allowed.
+- Forward every documented app setting through Compose, including shell/orchestrator
+  variables; provide opt-in bundled Redis authentication and bind development ports
+  only to loopback. Existing passwordless stacks continue to boot.
+
 - Hardened the shared-connection command gate against authentication/protocol state changes,
   ACL and module administration, persistence/replication controls, and mutating admin
   subcommands. Mixed command families now use explicit read-only allowlists so newly added
@@ -28,6 +35,13 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ### Fixed
 
+- Accept the SDK's raw boolean command arguments through commands, pipelines, and transactions.
+- Preserve multiline PubSub text and JSON payloads without splitting SSE messages, and keep
+  quiet subscriptions alive beyond Bun's default idle timeout.
+- Bound dedicated transaction and subscription setup waits; close subscriber connections
+  immediately during disconnect/shutdown, including when the backend stalls.
+- Treat whitespace-only request timeouts as unset. Preserve ZMPOP's native nested response.
+
 - Restored the documented Redis 6 support by capability-skipping Redis 7.4+/8-only hash-field
   expiry tests and sending the Redis 6-compatible lowercase geo unit through the SDK test.
 - Switched Dependabot to its native Bun ecosystem so update PRs include `bun.lock` and pass
@@ -36,6 +50,13 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
   30s default instead of silently disabling the per-request timeout.
 
 ### CI / Release
+
+- Scan the immutable release image for both amd64 and arm64 before promoting version/latest
+  tags; pin the scanner version and refresh security packages on every release attempt.
+- Add Compose configuration checks and regression coverage for post-handshake upstream
+  stalls, socket cleanup, multiline JSON, raw SDK booleans, and ZMPOP response nesting.
+- Preserve and reconcile the maintenance audit ledger and runbooks. Document backend
+  backup/restore and safe live AOF migration without changing existing persistence defaults.
 
 - Added Redis 6, Bun runtime-floor, build, and container smoke-test gates.
 - Made releases tag-only and added version/changelog verification, full tests, multi-platform

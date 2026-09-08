@@ -4,6 +4,14 @@ import { config } from "../config"
 import { log } from "../logger"
 import { createDedicatedConnection } from "../redis"
 import { shapeExecResults } from "../translate/transaction"
+import { withTimeout } from "../util/timeout"
+
+// Matches the COMMAND_TIMEOUT_MS convention in redis-pattern.ts (not exported
+// there). Bounds each MULTI/queued/EXEC round-trip so a silently stalled
+// upstream can't park the request handler and its dedicated connection
+// forever — the rejection flows into the catch below and the finally closes
+// the connection.
+const COMMAND_TIMEOUT_MS = 10_000
 
 export const multiExecRoutes = new Hono()
 
@@ -68,13 +76,14 @@ multiExecRoutes.post("/multi-exec", async (c) => {
 	const tx = await createDedicatedConnection()
 
 	try {
-		await tx.send("MULTI", [])
+		await withTimeout(tx.send("MULTI", []), COMMAND_TIMEOUT_MS, "MULTI")
 
 		for (const { command, args } of validated) {
-			await tx.send(command, args) // returns "QUEUED"
+			// returns "QUEUED"
+			await withTimeout(tx.send(command, args), COMMAND_TIMEOUT_MS, `QUEUED ${command}`)
 		}
 
-		const execResult = await tx.send("EXEC", [])
+		const execResult = await withTimeout(tx.send("EXEC", []), COMMAND_TIMEOUT_MS, "EXEC")
 
 		// EXEC returns null if the transaction was aborted (WATCH conflict or queued syntax error)
 		if (execResult === null) {

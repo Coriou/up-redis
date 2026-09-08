@@ -11,12 +11,12 @@ export const envSchema = z.object({
 	// value would cause setTimeout to fire on the same tick as `server.stop()`,
 	// forcing exit before any in-flight request could complete.
 	UPREDIS_SHUTDOWN_TIMEOUT: z.coerce.number().int().min(1000).default(30000),
-	// An empty value (e.g. `UPREDIS_REQUEST_TIMEOUT=` in compose files) must fall
-	// through to the default, not coerce to 0 — 0 is the documented "disabled"
-	// value, so a blank variable would silently opt the deployment out of request
-	// timeouts. An explicit "0" still disables.
+	// A blank or whitespace-only value (e.g. `UPREDIS_REQUEST_TIMEOUT=` or a stray
+	// space in a compose file) must fall through to the default, not coerce to 0 —
+	// 0 is the documented "disabled" value, so an empty variable would silently opt
+	// the deployment out of request timeouts. An explicit "0" still disables.
 	UPREDIS_REQUEST_TIMEOUT: z.preprocess(
-		(v) => (v === "" ? undefined : v),
+		(v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
 		z.coerce.number().int().nonnegative().default(30000),
 	),
 	UPREDIS_METRICS: z.enum(["true", "false"]).default("false"),
@@ -40,12 +40,53 @@ export const envSchema = z.object({
 	// secret into reverse-proxy/access logs, so operators can disable it and require
 	// the Authorization header instead.
 	UPREDIS_ALLOW_TOKEN_QUERY_PARAM: z.enum(["true", "false"]).default("true"),
+	// Well-known placeholder tokens (e.g. the .env.example default) refuse to start
+	// the server — a string public in the repo is not a secret. Set to "true" to
+	// explicitly accept the risk for a deployment.
+	UPREDIS_ALLOW_PLACEHOLDER_TOKEN: z.enum(["true", "false"]).default("false"),
 })
 
+const PLACEHOLDER_TOKENS = new Set([
+	"your-secret-token-here",
+	"changeme",
+	"change-me",
+	"secret",
+	"password",
+	"token",
+	"test",
+])
+
+/** True if the token is one of the well-known placeholder/example values. */
+export function isPlaceholderToken(token: string): boolean {
+	return PLACEHOLDER_TOKENS.has(token.toLowerCase())
+}
+
+/**
+ * Refuse well-known placeholder tokens at startup: the placeholder strings are
+ * public in this repo (e.g. the .env.example default), so a deployment running
+ * with one carries a credential anyone can read. Callers must set a strong
+ * random token or explicitly accept the risk with
+ * UPREDIS_ALLOW_PLACEHOLDER_TOKEN=true.
+ */
+export function assertTokenNotPlaceholder(parsed: z.infer<typeof envSchema>): void {
+	if (
+		isPlaceholderToken(parsed.UPREDIS_TOKEN) &&
+		parsed.UPREDIS_ALLOW_PLACEHOLDER_TOKEN !== "true"
+	) {
+		throw new Error(
+			"refusing to start — UPREDIS_TOKEN is a well-known placeholder value; " +
+				"set a strong random token (e.g. openssl rand -base64 32) or set " +
+				"UPREDIS_ALLOW_PLACEHOLDER_TOKEN=true to accept the risk",
+		)
+	}
+}
+
 const parsed = envSchema.parse(process.env)
+assertTokenNotPlaceholder(parsed)
 
 export const config = {
 	token: parsed.UPREDIS_TOKEN,
+	allowPlaceholderToken: parsed.UPREDIS_ALLOW_PLACEHOLDER_TOKEN === "true",
 	redisUrl: parsed.UPREDIS_REDIS_URL,
 	port: parsed.UPREDIS_PORT,
 	host: parsed.UPREDIS_HOST,
@@ -72,23 +113,13 @@ function parseCommandList(value: string): ReadonlySet<string> {
 	)
 }
 
-const PLACEHOLDER_TOKENS = new Set([
-	"your-secret-token-here",
-	"changeme",
-	"change-me",
-	"secret",
-	"password",
-	"token",
-	"test",
-])
-
 /**
  * Assess UPREDIS_TOKEN strength for a startup warning. Returns a human-readable
  * reason if the token looks weak, or null if it looks acceptable. This only warns
  * — it never blocks startup, to avoid breaking existing deployments on upgrade.
  */
 export function assessTokenStrength(token: string): string | null {
-	if (PLACEHOLDER_TOKENS.has(token.toLowerCase())) {
+	if (isPlaceholderToken(token)) {
 		return "it matches a well-known placeholder/example value"
 	}
 	if (token.length < 16) {

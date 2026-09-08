@@ -141,9 +141,12 @@ describe("checkBlockedCommand", () => {
 		).not.toBe(null)
 	})
 
-	// BLOCK detection must only inspect the options section (before STREAMS, and after
-	// the GROUP <group> <consumer> header for XREADGROUP). A stream/group/consumer
-	// literally named BLOCK must not be mistaken for the blocking option.
+	// BLOCK detection parses the options range positionally, mirroring Redis' own
+	// parser: XREAD options run from index 0 up to the first STREAMS keyword; for
+	// XREADGROUP the opaque "GROUP <group> <consumer>" header occupies args[0..3) and
+	// options run up to the next STREAMS keyword. A stream, group, or consumer named
+	// BLOCK or STREAMS must neither false-positive nor blind the scan (a group named
+	// STREAMS sits inside the header, so the first STREAMS token is not the boundary).
 	test("XREAD with a stream named BLOCK is allowed", () => {
 		expect(checkBlockedCommand("XREAD", ["COUNT", "10", "STREAMS", "BLOCK", "$"])).toBe(null)
 	})
@@ -162,6 +165,49 @@ describe("checkBlockedCommand", () => {
 
 	test("XREAD with a stream key named STREAMS is allowed", () => {
 		expect(checkBlockedCommand("XREAD", ["STREAMS", "STREAMS", "0"])).toBe(null)
+	})
+
+	test("XREADGROUP with a group named STREAMS and a real BLOCK option is blocked", () => {
+		// The GATE-2 repro: a group named STREAMS sits at args[1], so a first-STREAMS
+		// scan would yield an empty options slice and the BLOCK 0 would execute.
+		expect(
+			checkBlockedCommand("XREADGROUP", [
+				"GROUP",
+				"STREAMS",
+				"c",
+				"BLOCK",
+				"0",
+				"STREAMS",
+				"k",
+				"$",
+			]),
+		).not.toBe(null)
+	})
+
+	test("XREADGROUP with a group named STREAMS and no BLOCK option is allowed", () => {
+		expect(checkBlockedCommand("XREADGROUP", ["GROUP", "STREAMS", "c", "STREAMS", "k", "$"])).toBe(
+			null,
+		)
+	})
+
+	test("XREAD BLOCK detection is case-insensitive", () => {
+		expect(checkBlockedCommand("XREAD", ["block", "0", "streams", "s", "$"])).not.toBe(null)
+	})
+
+	test("XREADGROUP BLOCK detection is case-insensitive", () => {
+		expect(
+			checkBlockedCommand("XREADGROUP", ["group", "g", "c", "Block", "0", "Streams", "s", ">"]),
+		).not.toBe(null)
+	})
+
+	test("malformed XREADGROUP without a GROUP header rejects any BLOCK token (fail safe)", () => {
+		expect(checkBlockedCommand("XREADGROUP", ["g", "c", "BLOCK", "0"])).not.toBe(null)
+	})
+
+	test("XREADGROUP with a stream key named STREAMS is allowed", () => {
+		expect(checkBlockedCommand("XREADGROUP", ["GROUP", "g", "c", "STREAMS", "STREAMS", ">"])).toBe(
+			null,
+		)
 	})
 
 	// Server admin commands
@@ -434,8 +480,18 @@ describe("parseCommandArray", () => {
 		expect(() => parseCommandArray(["SET", "k", null])).toThrow()
 	})
 
-	test("rejects a boolean argument", () => {
-		expect(() => parseCommandArray(["SET", "k", true])).toThrow()
+	test("coerces a boolean argument to the string true/false (SDK serializer passes booleans raw)", () => {
+		expect(parseCommandArray(["SET", "k", true]).args).toEqual(["k", "true"])
+		expect(parseCommandArray(["SET", "k", false]).args).toEqual(["k", "false"])
+	})
+
+	test("coerces mixed string/boolean/number arguments", () => {
+		expect(parseCommandArray(["SET", "k", true, "EX", 100]).args).toEqual([
+			"k",
+			"true",
+			"EX",
+			"100",
+		])
 	})
 
 	test("rejects an empty command array", () => {
@@ -490,3 +546,12 @@ describe("checkBlockedCommand — dangerous + configurable", () => {
 		expect(checkBlockedCommand("GET", ["k"])).toBe(null)
 	})
 })
+
+for (const args of [
+	["GROUP", "g", "c", "GROUP", "STREAMS", "c", "BLOCK", "0", "STREAMS", "s", ">"],
+	["COUNT", "1", "GROUP", "STREAMS", "c", "BLOCK", "0", "STREAMS", "s", ">"],
+]) {
+	test("reordered/repeated GROUP header cannot hide BLOCK", () => {
+		expect(checkBlockedCommand("XREADGROUP", args)).toContain("BLOCK is not allowed")
+	})
+}

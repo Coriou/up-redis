@@ -15,6 +15,7 @@ on:
       - .dockerignore
       - docker-compose*.yml
       - .env.example
+      - scripts/**
       - .github/workflows/**
   pull_request:
     paths:
@@ -29,6 +30,7 @@ on:
       - .dockerignore
       - docker-compose*.yml
       - .env.example
+      - scripts/**
       - .github/workflows/**
 
 concurrency:
@@ -60,10 +62,11 @@ jobs:
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run build
+      - run: bun run check:compose
       # --coverage is advisory (no failing threshold) — it surfaces coverage in the log.
       - run: bun test tests/unit --coverage
         env:
-          UPREDIS_TOKEN: test
+          UPREDIS_TOKEN: ci-unit-k7Qe2mZ9xV4pR1sB8nT6wL3yH0cF5dG
 
   integration:
     name: Integration + compatibility (${{ matrix.backend }})
