@@ -23,8 +23,8 @@
 		"check:compose": "bun scripts/check-compose.ts"
 	},
 	"dependencies": {
-		"hono": "4.13.3",
-		"zod": "4.4.3"
+		"hono": "4.13.7",
+		"zod": "4.5.4"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.10",
