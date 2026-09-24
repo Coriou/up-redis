@@ -4,7 +4,7 @@
 	"private": true,
 	"description": "Self-hosted Upstash Redis-compatible HTTP proxy backed by any Redis 6+ server",
 	"type": "module",
-	"packageManager": "bun@1.3.14",
+	"packageManager": "bun@1.4.2",
 	"engines": {
 		"bun": ">=1.3.6"
 	},
@@ -23,13 +23,13 @@
 		"check:compose": "bun scripts/check-compose.ts"
 	},
 	"dependencies": {
-		"hono": "4.13.3",
-		"zod": "4.4.3"
+		"hono": "4.13.9",
+		"zod": "4.6.5"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.10",
-		"@types/bun": "1.4.0",
-		"@upstash/redis": "1.38.2",
+		"@biomejs/biome": "2.5.14",
+		"@types/bun": "1.4.2",
+		"@upstash/redis": "1.39.0",
 		"typescript": "7.0.2"
 	},
 	"license": "MIT",

@@ -34,7 +34,7 @@ services:
 
   redis:
     # Digest = redis:8-alpine fetched 2026-09-07; override UPREDIS_REDIS_IMAGE to float or switch engines (e.g. valkey/valkey:9-alpine).
-    image: ${UPREDIS_REDIS_IMAGE:-redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576}
+    image: ${UPREDIS_REDIS_IMAGE:-redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0}
     # Optional for upgrade compatibility; set a strong password on new deployments.
     environment:
       UPREDIS_REDIS_PASSWORD: ${UPREDIS_REDIS_PASSWORD:-}

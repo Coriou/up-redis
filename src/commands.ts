@@ -13,13 +13,14 @@ import { config } from "./config"
  *    - Authentication/protocol/cluster-routing state: AUTH, HELLO, READONLY,
  *      READWRITE, ASKING
  *    - Database switching: SELECT
+ *    - Per-connection import sessions: HIMPORT (Redis 8.10+ fieldsets)
  *    - Connection termination: QUIT, RESET
  *
  * 2. **Blocking commands** — hold the shared connection until they return,
  *    starving every other request. A `BLPOP key 0` would freeze the proxy
  *    forever. The Upstash SDK does not expose helpers for these commands.
- *    - List/zset blocking pops: BLPOP, BRPOP, BRPOPLPUSH, BLMOVE, BLMPOP,
- *      BZPOPMIN, BZPOPMAX, BZMPOP
+ *    - List/zset blocking pops: BLPOP, BRPOP, BRPOPLPUSH, BLMOVE, BLMOVEM,
+ *      BLMPOP, BZPOPMIN, BZPOPMAX, BZMPOP
  *    - Replication wait: WAIT, WAITAOF
  *    - Blocking stream reads: XREAD BLOCK, XREADGROUP BLOCK
  *
@@ -37,6 +38,8 @@ import { config } from "./config"
  *    - ACL / MODULE / CONFIG mutators — change server-wide security or config
  *    - CLUSTER mutators — change cluster topology
  *    - Persistence / replication controls — can block or reconfigure the server
+ *    - BACKUP / HOTKEYS (all but HELP) — server-wide backup and tracking controls
+ *    - TRIMSLOTS — mass-deletes keys by slot range
  */
 
 /** Single-word blocked commands (lookup by uppercased command name). */
@@ -64,6 +67,8 @@ const BLOCKED_COMMANDS = new Set([
 	"READONLY",
 	"READWRITE",
 	"ASKING",
+	// HIMPORT fieldsets (Redis 8.10+) are per-connection state shared by every proxy user
+	"HIMPORT",
 	// Connection termination/reset
 	"QUIT",
 	"RESET",
@@ -72,6 +77,7 @@ const BLOCKED_COMMANDS = new Set([
 	"BRPOP",
 	"BRPOPLPUSH",
 	"BLMOVE",
+	"BLMOVEM",
 	"BLMPOP",
 	"BZPOPMIN",
 	"BZPOPMAX",
@@ -94,6 +100,7 @@ const BLOCKED_COMMANDS = new Set([
 	"REPLCONF",
 	"SYNC",
 	"PSYNC",
+	"TRIMSLOTS",
 ])
 
 /**
@@ -139,6 +146,9 @@ const READ_ONLY_SUBCOMMANDS = new Map<string, ReadonlySet<string>>([
 	["LATENCY", new Set(["DOCTOR", "GRAPH", "HISTORY", "HISTOGRAM", "LATEST", "HELP"])],
 	["MEMORY", new Set(["DOCTOR", "MALLOC-STATS", "STATS", "USAGE", "HELP"])],
 	["SLOWLOG", new Set(["GET", "LEN", "HELP"])],
+	// Redis flags every BACKUP (8.10+) and HOTKEYS (8.6+) subcommand except HELP as admin.
+	["BACKUP", new Set(["HELP"])],
+	["HOTKEYS", new Set(["HELP"])],
 ])
 
 /** SCRIPT LOAD/EXISTS remain available for EVALSHA compatibility. */
@@ -165,6 +175,7 @@ const BLOCKING_CMDS = new Set([
 	"BRPOP",
 	"BRPOPLPUSH",
 	"BLMOVE",
+	"BLMOVEM",
 	"BLMPOP",
 	"BZPOPMIN",
 	"BZPOPMAX",
@@ -188,6 +199,7 @@ const ADMIN_CMDS = new Set([
 	"REPLCONF",
 	"SYNC",
 	"PSYNC",
+	"TRIMSLOTS",
 ])
 
 /**

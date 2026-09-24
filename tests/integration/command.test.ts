@@ -504,6 +504,28 @@ describe("POST / (blocked commands)", () => {
 		expect((data as { error: string }).error).toContain("BRPOP")
 	})
 
+	test("BLMOVEM is blocked (Redis 8.10 blocking multi-move)", async () => {
+		const { status, data } = await api("POST", "/", ["BLMOVEM", "s", "d", "LEFT", "RIGHT", "0"])
+		expect(status).toBe(400)
+		expect((data as { error: string }).error).toContain("BLMOVEM")
+		const piped = await api("POST", "/pipeline", [["BLMOVEM", "s", "d", "LEFT", "RIGHT", "0"]])
+		expect(piped.status).toBe(200)
+		expect((piped.data as Array<{ error?: string }>)[0].error).toContain("BLMOVEM")
+	})
+
+	test("Redis 8.x admin and connection-state commands are blocked", async () => {
+		for (const command of [
+			["BACKUP", "START"],
+			["HOTKEYS", "START"],
+			["HIMPORT", "PREPARE", "fs", "a"],
+			["TRIMSLOTS", "RANGES", "1", "0", "100"],
+		]) {
+			const { status, data } = await api("POST", "/", command)
+			expect(status).toBe(400)
+			expect((data as { error: string }).error).toContain(command[0] as string)
+		}
+	})
+
 	test("WAIT is blocked", async () => {
 		const { status, data } = await api("POST", "/", ["WAIT", "0", "0"])
 		expect(status).toBe(400)

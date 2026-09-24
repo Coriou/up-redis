@@ -21,6 +21,9 @@ Runs:
   DEPLOY-1..4 re-confirmed open; FIDELITY-2 / CONC-3 refutations stand; 12 new
   findings (GATE-2, CONC-4..7, FIDELITY-3..4, DEPLOY-6..9, AUTH-9); AUTH-8
   severity raised low → medium (folded DEPLOY-5).
+- **2026-09-24** — ecosystem sweep of `dd44f98`; report:
+  `docs/audit/runs/2026-09-24-sweep.md`. New GATE-3 (high), GATE-4, GATE-5
+  (medium), GATE-6 (low, open), FIDELITY-5 (low, open); DEPLOY-8 digest refreshed.
 
 ---
 
@@ -57,6 +60,48 @@ Runs:
   Affects `POST /`, `/pipeline`, `/multi-exec` (shared gate). Fix direction:
   scan all args except the LAST `STREAMS` boundary (or reject BLOCK whenever
   any token after the header equals `STREAMS` before the final keyword).
+
+## GATE-3 — Redis 8.10 `BLMOVEM` is a blocking command the gate allowed; wedges the shared connection
+
+- Found: 2026-09-24 · Sev: high · Location: `src/commands.ts` (`BLOCKED_COMMANDS`, `BLOCKING_CMDS`)
+- Status: fixed (2026-09-24 sweep branch `claude/nice-cray-p4bj63`)
+- Resolution: Redis 8.10.0 added `BLMOVEM` (`COMMAND INFO` flags: `blocking`).
+  Repro before fix against Redis 8.10.2: `POST / ["BLMOVEM","src","dst","LEFT","RIGHT","0"]`
+  hangs, and a bystander `POST / ["PING"]` also times out until an external
+  `RPUSH src …` releases the shared connection. Now blocked on `/`, `/pipeline`,
+  and `/multi-exec`; non-blocking `LMOVEM` stays allowed. Unit + integration
+  regression tests added. Root cause is structural (new top-level commands
+  default to allowed); Recipe 2 item 4 is the detection mechanism.
+
+## GATE-4 — Redis 8.x server-admin commands `BACKUP`, `HOTKEYS`, `TRIMSLOTS` allowed
+
+- Found: 2026-09-24 · Sev: medium · Location: `src/commands.ts`
+- Status: fixed (2026-09-24 sweep branch `claude/nice-cray-p4bj63`)
+- Resolution: `BACKUP` (8.10, all subcommands flagged `admin` except HELP)
+  starts/seals server-side backups; `HOTKEYS` (8.6, same flag pattern) enables
+  server-wide tracking; `TRIMSLOTS` (8.4, `@dangerous`) mass-deletes keys by slot
+  range (cluster-only, inert on standalone). `BACKUP`/`HOTKEYS` join the
+  fail-closed read-only allowlist map with `HELP` only; `TRIMSLOTS` is blocked as
+  admin.
+
+## GATE-5 — Redis 8.10 `HIMPORT` fieldsets are per-connection state shared by every proxy user
+
+- Found: 2026-09-24 · Sev: medium · Location: `src/commands.ts`
+- Status: fixed (2026-09-24 sweep branch `claude/nice-cray-p4bj63`)
+- Resolution: `HIMPORT PREPARE/SET/DISCARD/DISCARDALL` keep fieldsets on the
+  client connection. On the shared connection one token holder's
+  `HIMPORT DISCARDALL` wipes other users' sessions and fieldsets accumulate
+  without bound. Blocked with the connection-state message (like `SELECT`).
+
+## GATE-6 — `RESTORE` accepts raw serialized payloads (backend parser attack surface)
+
+- Found: 2026-09-24 · Sev: low · Location: `src/commands.ts` (not in gate)
+- Status: open (policy decision; token holders can already run arbitrary data
+  commands and scripting, so this is defense-in-depth only)
+- Resolution: Redis 6.2.23 fixed an RCE via a crafted stream `RESTORE`
+  payload. Backends at or above 6.2.24 / 7.4.11 / 8.10.2 are patched. Options:
+  document "keep the backend patched" (current), or add `RESTORE` to the
+  dangerous-by-default set. No action taken in the sweep.
 
 ## AUTH-1 — Empty `UPREDIS_REQUEST_TIMEOUT=` silently disables the per-request timeout
 
@@ -183,6 +228,16 @@ Runs:
   with no error (verified end-to-end with the SDK Subscriber). The pmessage
   path already JSON-stringifies payloads — the exact-subscribe path needs the
   same defense (mirror `formatPatternMessagePayload`).
+
+## FIDELITY-5 — No SDK compatibility coverage for `@upstash/redis` 1.39 array (`AR*`) commands
+
+- Found: 2026-09-24 · Sev: low · Location: `tests/compatibility/`
+- Status: open (test gap; no known defect)
+- Resolution: SDK 1.39.0 adds Redis 8.8 `AR*` helpers. `ARSCAN` / `ARGREP
+  WITHVALUES` return nested `[idx, value]` pairs in both RESP2 and RESP3, and
+  `flattenScorePairs` does not touch `AR*`, so the shape is preserved by
+  construction; `ARINFO` is a RESP3 map flattened by `normalizeResp3`. Add
+  capability-gated compat tests (skip below Redis 8.8).
 
 ## CONC-1 — `RespParser` buffers unboundedly on a never-terminating upstream stream
 
@@ -317,6 +372,11 @@ Runs:
 - Fix: the compose default is digest-pinned
   `redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576`
   (fetched 2026-09-07); `UPREDIS_REDIS_IMAGE` remains the documented override.
+- 2026-09-24 sweep: digest refreshed to Redis 8.10.2 (security release)
+  `sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0`.
+  Dependabot's `docker-compose` ecosystem did not propose this bump (the image
+  sits inside `${UPREDIS_REDIS_IMAGE:-…}` interpolation), so the sweep must keep
+  refreshing it manually.
 - Resolution: the app base is digest-pinned (Dockerfile:1); the data-plane
   image that owns `redis-data` floats. Fix direction: default to a
   `@sha256:`-pinned image, keep the plain tag as a documented override value.

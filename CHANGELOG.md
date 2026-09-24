@@ -11,6 +11,10 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ### Security
 
+- Block Redis 8.x commands the gate previously allowed: `BLMOVEM` (blocking — a
+  `BLMOVEM … 0` froze every request on the shared connection), `HIMPORT` (per-connection
+  fieldsets shared across users), `TRIMSLOTS`, and `BACKUP` / `HOTKEYS` (all subcommands
+  except `HELP`).
 - Reject blocking stream reads even when repeated/reordered GROUP headers contain
   reserved-word names, preserving shared-connection availability.
 - Refuse published placeholder API tokens at startup unless explicitly allowed.
@@ -32,6 +36,14 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 - Updated Hono to 4.13.3, `@upstash/redis` to 1.38.2, Biome to 2.5.10, Bun types to 1.4.0, and TypeScript to 7.0.2.
 - Marked the service package private and declared its Bun engine/package-manager metadata.
 - Aligned `biome.json` `$schema` with the Biome 2.5.10 CLI.
+- Moved CI and the container image to Bun 1.4.2 (runtime floor stays 1.3.6 and is still
+  tested; `bun.lock` stays at lockfile v1 so floor installs keep working).
+- Updated Hono to 4.13.9, Zod to 4.6.5, `@upstash/redis` to 1.39.0, Biome to 2.5.14, and Bun
+  types to 1.4.2; aligned `biome.json` `$schema` with Biome 2.5.14.
+- Bumped the bundled Compose backend digest to Redis 8.10.2 (`redis:8-alpine`). Existing
+  deployments that need their current backend should set `UPREDIS_REDIS_IMAGE` explicitly.
+- Updated pinned GitHub Actions (setup-qemu 4.4.0, setup-buildx 4.4.1, build-push 7.4.0,
+  action-gh-release 3.0.3, CodeQL 4.38.1).
 
 ### Fixed
 
