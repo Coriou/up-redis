@@ -7,7 +7,7 @@ Modern rewrite of [SRH](https://github.com/hiett/serverless-redis-http), sibling
 
 ## Tech Stack
 
-- **Runtime:** Bun 1.3.6+ floor (native TypeScript); CI and the Docker image pin 1.3.14
+- **Runtime:** Bun 1.3.6+ floor (native TypeScript); CI and the Docker image pin 1.4.2
 - **HTTP:** Hono v4
 - **Redis client:** `Bun.redis` (native, RESP3, auto-pipelining, zero-dep)
 - **Validation:** Zod v4
@@ -91,11 +91,12 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 - Monitor mode: `MONITOR`
 - Transaction state: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` — use `/multi-exec`
 - Database switching: `SELECT`
+- Per-connection import sessions: `HIMPORT` (Redis 8.10+ fieldsets)
 - Authentication/protocol/routing state: `AUTH`, `HELLO`, `READONLY`, `READWRITE`, `ASKING`
 - Connection termination: `QUIT`, `RESET`
 
 **Blocking commands** (would hold the shared connection and starve other requests):
-- List/zset blocking pops: `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`
+- List/zset blocking pops: `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMOVEM`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`
 - Blocking stream reads: `XREAD BLOCK`, `XREADGROUP BLOCK` (detection parses positionally like Redis: the scanner skips opaque `GROUP <group> <consumer>` values and `COUNT` arguments at any option position, including repeated/reordered GROUP headers — so a group/consumer named `STREAMS` cannot blind the scan, and a stream/group/consumer named `BLOCK` is still allowed)
 - Replication wait: `WAIT`, `WAITAOF`
 
@@ -107,7 +108,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 - `CLIENT KILL` — could kill the proxy's own shared connection
 - `CLIENT PAUSE` / `CLIENT UNPAUSE` — server-wide pause
 - `CLIENT REPLY` — corrupts protocol on shared connection
-- `ACL`, `MODULE`, persistence/replication controls, and mutating `CONFIG` / `FUNCTION` / `SCRIPT` / `LATENCY` / `MEMORY` / `SLOWLOG` operations
+- `ACL`, `MODULE`, `TRIMSLOTS`, `BACKUP` / `HOTKEYS` (all but `HELP`), persistence/replication controls, and mutating `CONFIG` / `FUNCTION` / `SCRIPT` / `LATENCY` / `MEMORY` / `SLOWLOG` operations
 - Mutating `CLIENT` operations and all non-read-only `CLUSTER` subcommands
 
 **Dangerous by default (configurable):**
@@ -265,12 +266,12 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-617 tests across three tiers (Redis 8):
+622 tests across three tiers (Redis 8):
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unit**              | 324   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening and preserved ZMPOP nesting, base64 encoding (incl. depth-aware "OK"), SSE ordering + newline-safe payloads + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation (booleans coerced), stream-option gate parsing (including repeated GROUP headers), fail-closed admin command policy, token strength + placeholder refusal, config coercion traps |
-| **Integration**       | 189   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers incl. stalled-upstream (bounded awaits, shutdown) and idle-SSE (Bun idleTimeout) regression harnesses. Redis 6 skips five hash-field-expiry commands and ZMPOP; Redis 7 skips the three Redis-8-only commands. A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
+| **Unit**              | 327   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening and preserved ZMPOP nesting, base64 encoding (incl. depth-aware "OK"), SSE ordering + newline-safe payloads + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation (booleans coerced), stream-option gate parsing (including repeated GROUP headers), fail-closed admin command policy, token strength + placeholder refusal, config coercion traps |
+| **Integration**       | 191   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers incl. stalled-upstream (bounded awaits, shutdown) and idle-SSE (Bun idleTimeout) regression harnesses. Redis 6 skips five hash-field-expiry commands and ZMPOP; Redis 7 skips the three Redis-8-only commands. A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
 | **SDK Compatibility** | 104   | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class, newline payload round-trip, withscores/withvalues shape, literal-"OK" fidelity) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.

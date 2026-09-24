@@ -144,9 +144,9 @@ Authentication accepts `Authorization: Bearer <token>` and Upstash's `_token=<to
 
 All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work, with these exceptions blocked at the proxy layer to protect the shared connection:
 
-- **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `AUTH`, `HELLO`, `READONLY`/`READWRITE`, `ASKING`, `SELECT`, `QUIT`, `RESET`
-- **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
-- **Server admin / DoS vectors:** `SHUTDOWN`, replication/persistence controls (`REPLICAOF`, `FAILOVER`, `MIGRATE`, `SAVE`, `BGSAVE`, etc.), `DEBUG`, `ACL`, `MODULE`, mutating `CONFIG`/`FUNCTION`/`SCRIPT`/`LATENCY`/`MEMORY`/`SLOWLOG` subcommands, mutating `CLIENT` subcommands, and all non-read-only `CLUSTER` subcommands
+- **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `AUTH`, `HELLO`, `READONLY`/`READWRITE`, `ASKING`, `SELECT`, `HIMPORT` (per-connection fieldsets), `QUIT`, `RESET`
+- **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMOVEM`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
+- **Server admin / DoS vectors:** `SHUTDOWN`, replication/persistence controls (`REPLICAOF`, `FAILOVER`, `MIGRATE`, `SAVE`, `BGSAVE`, etc.), `DEBUG`, `ACL`, `MODULE`, `TRIMSLOTS`, `BACKUP`/`HOTKEYS` (except `HELP`), mutating `CONFIG`/`FUNCTION`/`SCRIPT`/`LATENCY`/`MEMORY`/`SLOWLOG` subcommands, mutating `CLIENT` subcommands, and all non-read-only `CLUSTER` subcommands
 - **Dangerous by default (configurable):** `KEYS` (O(N) — scans the whole keyspace on the shared connection), `FLUSHALL`, `FLUSHDB`, `SWAPDB` are blocked by default. Set `UPREDIS_ALLOW_DANGEROUS_COMMANDS=true` to permit them. Add your own with `UPREDIS_BLOCKED_COMMANDS`.
 
 Requests are also rejected with `400` if a command argument isn't a string or number (e.g. an object or `null`, which would otherwise be silently coerced to garbage like `"[object Object]"`), or if the `Upstash-Response-Format: resp2` header is sent (up-redis only speaks the JSON envelope).
@@ -186,7 +186,7 @@ Read-only `CLIENT`, `CLUSTER`, `CONFIG`, `FUNCTION`, `LATENCY`, `MEMORY`, and `S
 
 ### Versioning & SDK compatibility
 
-up-redis tracks the current `@upstash/redis` SDK (pinned to `1.38.x` in this repo) and the documented Upstash REST contract. A weekly CI job runs the full SDK compatibility suite against `@upstash/redis@latest` and opens an issue automatically on any drift, so incompatibilities surface quickly. Any standard Redis 6+ server works as the backend; module commands (RedisJSON `JSON.*`, Search `FT.*`) are passed through transparently but only work if your Redis has the corresponding module loaded.
+up-redis tracks the current `@upstash/redis` SDK (pinned to `1.39.x` in this repo) and the documented Upstash REST contract. A weekly CI job runs the full SDK compatibility suite against `@upstash/redis@latest` and opens an issue automatically on any drift, so incompatibilities surface quickly. Any standard Redis 6+ server works as the backend; module commands (RedisJSON `JSON.*`, Search `FT.*`) are passed through transparently but only work if your Redis has the corresponding module loaded. Upstash-proprietary SDK namespaces with no Redis equivalent (e.g. `redis.vector` / `VECTOR.*`) are not supported — see [up-vector](https://github.com/Coriou/up-vector) for a self-hosted Upstash Vector.
 
 up-redis itself follows [Semantic Versioning](https://semver.org/). Changes are recorded in [CHANGELOG.md](./CHANGELOG.md), and pushing a `v*` git tag builds and publishes the container image to `ghcr.io/coriou/up-redis` (semver + `latest` tags) via the release workflow. Pin a specific tag in production rather than tracking `latest`.
 
@@ -460,7 +460,7 @@ and set `UPREDIS_REDIS_URL` to your endpoint (the override requires it and fails
 
 **TLS:** bare `rediss://` / `valkeys://` verifies out of the box against Bun's bundled CAs for
 Upstash, ElastiCache, MemoryDB, Azure Cache, Redis Cloud, and current Aiven. up-redis requires
-Bun ≥ 1.3.6 and ships 1.3.14. **Known limitation:** **private-CA backends** (e.g. GCP
+Bun ≥ 1.3.6 and ships 1.4.2. **Known limitation:** **private-CA backends** (e.g. GCP
 Memorystore, a self-hosted private CA) are not yet supported — a `UPREDIS_REDIS_CA_FILE` option is
 a planned follow-up.
 
