@@ -27,7 +27,7 @@
 		"zod": "4.6.5"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.14",
+		"@biomejs/biome": "2.5.15",
 		"@types/bun": "1.4.2",
 		"@upstash/redis": "1.39.0",
 		"typescript": "7.0.2"
