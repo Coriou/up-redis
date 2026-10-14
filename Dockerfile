@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f AS builder
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS builder
 WORKDIR /app
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
@@ -6,7 +6,7 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN bun build src/index.ts --target=bun --outdir=dist --minify
 
-FROM oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36aee6455b33dd270fb93c0dd5cef6f
+FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373
 WORKDIR /app
 # CI injects a unique value per run so this security-refresh layer never
 # resolves from cache: a frozen layer once shipped Alpine packages that Trivy's
