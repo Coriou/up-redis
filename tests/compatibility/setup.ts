@@ -4,7 +4,13 @@ export const TOKEN = process.env.UPREDIS_TOKEN ?? "test-token-123"
 export const URL = process.env.UPREDIS_TEST_URL ?? "http://localhost:8080"
 
 export function createRedis(): Redis {
-	return new Redis({ url: URL, token: TOKEN })
+	return new Redis({
+		url: URL,
+		token: TOKEN,
+		...(process.env.UPREDIS_TEST_ENCODING === "base64"
+			? { responseEncoding: "base64" as const }
+			: {}),
+	})
 }
 
 export function randomKey(prefix = "compat"): string {

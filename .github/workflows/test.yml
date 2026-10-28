@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Cache Bun dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Cache Bun dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -136,6 +136,10 @@ jobs:
 
       - name: SDK compatibility tests
         run: bun test tests/compatibility
+      - name: SDK compatibility with base64 responses
+        run: bun test tests/compatibility
+        env:
+          UPREDIS_TEST_ENCODING: base64
 
       - name: up-redis logs (on failure)
         if: failure()
@@ -187,6 +191,10 @@ jobs:
 
       - run: bun test tests/integration
       - run: bun test tests/compatibility
+      - name: SDK compatibility with base64 responses
+        run: bun test tests/compatibility
+        env:
+          UPREDIS_TEST_ENCODING: base64
 
       - name: up-redis logs (on failure)
         if: failure()
@@ -224,7 +232,7 @@ jobs:
       - name: Scan container for known vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          version: v0.73.0
+          version: v0.76.1
           scan-type: image
           image-ref: upredis:ci
           scanners: vuln

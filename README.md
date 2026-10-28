@@ -121,6 +121,16 @@ curl -X POST http://localhost:8080/ \
 # → {"result":1}
 ```
 
+PubSub SSE channel and pattern names must be 1–512 characters and cannot contain
+commas or ASCII control characters. The SDK uses comma-delimited fields without
+a name-escaping mechanism. Requests with incompatible targets return HTTP 400.
+If a broad pattern matches an incompatible channel published through a generic
+command or an external Redis client, the stream emits
+`error,,"Channel cannot be represented in the PubSub SSE format"` and closes.
+The SDK reports this through its `error` listener; reconnect with a narrower
+pattern after fixing the publisher. The publish shortcut also respects
+`UPREDIS_BLOCKED_COMMANDS=PUBLISH`.
+
 ## API Compatibility
 
 Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 570 tests including 101 using the real `@upstash/redis` SDK.
@@ -144,12 +154,12 @@ Authentication accepts `Authorization: Bearer <token>` and Upstash's `_token=<to
 
 All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work, with these exceptions blocked at the proxy layer to protect the shared connection:
 
-- **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `AUTH`, `HELLO`, `READONLY`/`READWRITE`, `ASKING`, `SELECT`, `HIMPORT` (per-connection fieldsets), `QUIT`, `RESET`
+- **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `AUTH`, `HELLO`, `READONLY`/`READWRITE`, `ASKING`, `SELECT`, `QUIT`, `RESET`
 - **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMOVEM`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
-- **Server admin / DoS vectors:** `SHUTDOWN`, replication/persistence controls (`REPLICAOF`, `FAILOVER`, `MIGRATE`, `SAVE`, `BGSAVE`, etc.), `DEBUG`, `ACL`, `MODULE`, `TRIMSLOTS`, `BACKUP`/`HOTKEYS` (except `HELP`), mutating `CONFIG`/`FUNCTION`/`SCRIPT`/`LATENCY`/`MEMORY`/`SLOWLOG` subcommands, mutating `CLIENT` subcommands, and all non-read-only `CLUSTER` subcommands
+- **Server admin / DoS vectors:** `SHUTDOWN`, replication/persistence controls (`REPLICAOF`, `FAILOVER`, `MIGRATE`, `SAVE`, `BGSAVE`, etc.), `DEBUG`, `ACL`, `MODULE`, `BACKUP`, `HOTKEYS` (except HELP), `TRIMSLOTS`, mutating `CONFIG`/`FUNCTION`/`SCRIPT`/`LATENCY`/`MEMORY`/`SLOWLOG` subcommands, mutating `CLIENT` subcommands, and all non-read-only `CLUSTER` subcommands
 - **Dangerous by default (configurable):** `KEYS` (O(N) — scans the whole keyspace on the shared connection), `FLUSHALL`, `FLUSHDB`, `SWAPDB` are blocked by default. Set `UPREDIS_ALLOW_DANGEROUS_COMMANDS=true` to permit them. Add your own with `UPREDIS_BLOCKED_COMMANDS`.
 
-Requests are also rejected with `400` if a command argument isn't a string or number (e.g. an object or `null`, which would otherwise be silently coerced to garbage like `"[object Object]"`), or if the `Upstash-Response-Format: resp2` header is sent (up-redis only speaks the JSON envelope).
+Requests are also rejected with `400` if a command argument isn't a string, number, or boolean (e.g. an object or `null`, which would otherwise be silently coerced to garbage like `"[object Object]"`), or if the `Upstash-Response-Format: resp2` header is sent (up-redis only speaks the JSON envelope).
 
 Read-only `CLIENT`, `CLUSTER`, `CONFIG`, `FUNCTION`, `LATENCY`, `MEMORY`, and `SLOWLOG` subcommands remain available through explicit allowlists. Unknown subcommands in these mixed admin families fail closed after a Redis upgrade. `SCRIPT EXISTS` and `SCRIPT LOAD` remain available for `EVALSHA` compatibility.
 
@@ -186,7 +196,7 @@ Read-only `CLIENT`, `CLUSTER`, `CONFIG`, `FUNCTION`, `LATENCY`, `MEMORY`, and `S
 
 ### Versioning & SDK compatibility
 
-up-redis tracks the current `@upstash/redis` SDK (pinned to `1.39.x` in this repo) and the documented Upstash REST contract. A weekly CI job runs the full SDK compatibility suite against `@upstash/redis@latest` and opens an issue automatically on any drift, so incompatibilities surface quickly. Any standard Redis 6+ server works as the backend; module commands (RedisJSON `JSON.*`, Search `FT.*`) are passed through transparently but only work if your Redis has the corresponding module loaded. Upstash-proprietary SDK namespaces with no Redis equivalent (e.g. `redis.vector` / `VECTOR.*`) are not supported — see [up-vector](https://github.com/Coriou/up-vector) for a self-hosted Upstash Vector.
+up-redis tracks the current `@upstash/redis` SDK (pinned to `1.40.0` in this repo) and the documented Upstash REST contract. A weekly CI job runs the full SDK compatibility suite against `@upstash/redis@latest` and opens an issue automatically on any drift, so incompatibilities surface quickly. The suite runs with both the SDK default JSON encoding and explicit base64 responses. New SDK helpers still require backend support: AR* arrays need recent Redis, and VECTOR.* / search helpers are not guaranteed on every backend. Any standard Redis 6+ server works as the backend; module commands (RedisJSON `JSON.*`, Search `FT.*`) are passed through transparently but only work if your Redis has the corresponding module loaded.
 
 up-redis itself follows [Semantic Versioning](https://semver.org/). Changes are recorded in [CHANGELOG.md](./CHANGELOG.md), and pushing a `v*` git tag builds and publishes the container image to `ghcr.io/coriou/up-redis` (semver + `latest` tags) via the release workflow. Pin a specific tag in production rather than tracking `latest`.
 
@@ -337,13 +347,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-570 tests across three tiers:
+654 tests across three tiers (Redis 8), with the SDK suite run in both encodings:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 290 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, fail-closed admin command policy, arg validation, token strength |
-| **Integration** | 179 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); Redis 6 skips five hash-field-expiry commands, Redis 7 skips the three Redis-8-only commands |
-| **SDK Compatibility** | 101 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, withscores/withvalues shape, literal-"OK" fidelity, and SDK 1.38 auto-pipeline behavior) |
+| **Unit** | 332 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, fail-closed admin command policy, arg validation, token strength |
+| **Integration** | 213 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); Redis 6 skips five hash-field-expiry commands and ZMPOP, Redis 7 skips the three Redis-8-only commands |
+| **SDK Compatibility** | 109 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, withscores/withvalues shape, literal-"OK" fidelity, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
 bun test                       # All tests
@@ -424,14 +434,19 @@ CI runs the integration + SDK-compatibility suites against Redis 6, Redis 7, Red
 The default bundled backend moved from `redis:7-alpine` to `redis:8-alpine`. **This changes the
 live data path on an existing production deploy**, so upgrade deliberately:
 
-1. **In-place upgrade is safe.** Redis 8 loads Redis 7.x RDB/AOF (forward-compatible), so the
-   existing `redis-data` named volume upgrades in place — no dump/restore needed.
-2. **Snapshot first anyway.** Take a backup before pulling the new image (e.g. `BGSAVE`, copy the
-   RDB file, or snapshot the volume) — standard upgrade hygiene.
-3. **It is fully reversible.** To roll back to Redis 7, set `UPREDIS_REDIS_IMAGE=redis:7-alpine`
-   in Coolify's env UI (or `.env`) and redeploy. Reversibility holds because Redis 7 → 8 is
-   forward-compatible at the persistence layer for ordinary keyspaces; an operator who has begun
-   using Redis-8-only features should not expect a clean downgrade.
+1. **Verify the upgrade in isolation.** Restore a backup into the exact target Redis image
+   and check application invariants before moving the production volume. Redis 8 can load
+   older persistence formats, but modules and application behavior also need validation.
+2. **Keep a verified pre-upgrade backup.** Take a coherent RDB/AOF backup, record the source
+   version and checksum, and verify restoration using that source version. Preserve this copy
+   outside the live volume; follow [persistence and recovery](docs/persistence.md).
+3. **A backend downgrade requires a data plan.** Changing the image back to Redis 7 can fail
+   even for ordinary string keys: newer Redis 8 snapshots use an RDB format Redis 7 cannot
+   read. Preserve the current Redis 8 volume and a fresh backup. To return to Redis 7, use a
+   separate volume with a verified Redis-7-compatible backup or a tested logical migration.
+   Restoring the pre-upgrade backup loses later writes unless they are reconciled. Pause
+   writers for the cutover and verify the resulting data before switching traffic. Do not
+   point Redis 7 at the upgraded volume or overwrite the current data as a rollback step.
 
 The **floor is unchanged**: Redis 6+ is still supported.
 
@@ -460,7 +475,7 @@ and set `UPREDIS_REDIS_URL` to your endpoint (the override requires it and fails
 
 **TLS:** bare `rediss://` / `valkeys://` verifies out of the box against Bun's bundled CAs for
 Upstash, ElastiCache, MemoryDB, Azure Cache, Redis Cloud, and current Aiven. up-redis requires
-Bun ≥ 1.3.6 and ships 1.4.2. **Known limitation:** **private-CA backends** (e.g. GCP
+Bun ≥ 1.3.6 and ships 1.4.4. **Known limitation:** **private-CA backends** (e.g. GCP
 Memorystore, a self-hosted private CA) are not yet supported — a `UPREDIS_REDIS_CA_FILE` option is
 a planned follow-up.
 

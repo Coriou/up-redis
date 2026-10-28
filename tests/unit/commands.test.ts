@@ -580,3 +580,27 @@ for (const args of [
 		expect(checkBlockedCommand("XREADGROUP", args)).toContain("BLOCK is not allowed")
 	})
 }
+
+// Redis 8.4–8.10 introduced new blocking/server-wide commands.
+describe("new Redis command safety", () => {
+	test("HIMPORT cannot share session-local fieldsets between callers", () => {
+		expect(checkBlockedCommand("HIMPORT", ["PREPARE", "fields", "name"])).toContain(
+			"shared Redis connection",
+		)
+	})
+	test("BLMOVEM cannot block the shared connection", () => {
+		expect(checkBlockedCommand("blmovem", ["src", "dst", "LEFT", "RIGHT", "0"])).toContain(
+			"blocking",
+		)
+	})
+	for (const command of ["BACKUP", "TRIMSLOTS"]) {
+		test(`${command} server-wide operations are blocked`, () => {
+			expect(checkBlockedCommand(command, "START")).toContain("admin")
+		})
+	}
+	test("HOTKEYS allows introspection and rejects tracking mutations and unknown operations", () => {
+		for (const sub of ["HELP"]) expect(checkBlockedCommand("HOTKEYS", sub)).toBeNull()
+		for (const sub of ["GET", "START", "STOP", "RESET", "FUTURE"])
+			expect(checkBlockedCommand("HOTKEYS", sub)).toContain("admin")
+	})
+})

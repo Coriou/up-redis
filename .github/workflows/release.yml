@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Verify tag metadata
         env:
@@ -85,6 +85,10 @@ jobs:
 
       - run: bun test tests/integration
       - run: bun test tests/compatibility
+      - name: SDK compatibility with base64 responses
+        run: bun test tests/compatibility
+        env:
+          UPREDIS_TEST_ENCODING: base64
 
       - name: up-redis logs (on failure)
         if: failure()
@@ -108,7 +112,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -156,7 +160,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -167,7 +171,7 @@ jobs:
       - name: Scan image (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          version: v0.73.0
+          version: v0.76.1
           image-ref: ghcr.io/coriou/up-redis@${{ needs.docker.outputs.digest }}
           scanners: vuln
           vuln-type: os,library
@@ -184,7 +188,7 @@ jobs:
     needs: [docker, scan]
     steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -33,18 +33,27 @@ services:
       retries: 3
 
   redis:
-    # Digest = redis:8-alpine fetched 2026-09-07; override UPREDIS_REDIS_IMAGE to float or switch engines (e.g. valkey/valkey:9-alpine).
-    image: ${UPREDIS_REDIS_IMAGE:-redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0}
+    # Digest = redis:8-alpine fetched 2026-10-28; override UPREDIS_REDIS_IMAGE to float or switch engines (e.g. valkey/valkey:9-alpine).
+    image: ${UPREDIS_REDIS_IMAGE:-redis:8-alpine@sha256:47b08295737773de3b711fb86f13ae802f5074e96a9a2d29f5f80164ac08c046}
     # Optional for upgrade compatibility; set a strong password on new deployments.
     environment:
       UPREDIS_REDIS_PASSWORD: ${UPREDIS_REDIS_PASSWORD:-}
       # Enable only after a running-instance migration (docs/persistence.md).
       UPREDIS_REDIS_APPENDONLY: ${UPREDIS_REDIS_APPENDONLY:-no}
-    command: ["sh", "-c", "exec redis-server --requirepass \"$$UPREDIS_REDIS_PASSWORD\" --appendonly \"$$UPREDIS_REDIS_APPENDONLY\" --appendfsync everysec"]
+    command:
+      [
+        "sh",
+        "-c",
+        'exec redis-server --requirepass "$$UPREDIS_REDIS_PASSWORD" --appendonly "$$UPREDIS_REDIS_APPENDONLY" --appendfsync everysec',
+      ]
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$UPREDIS_REDIS_PASSWORD\" ping | grep -q PONG"]
+      test:
+        [
+          "CMD-SHELL",
+          'redis-cli --no-auth-warning -a "$$UPREDIS_REDIS_PASSWORD" ping | grep -q PONG',
+        ]
       interval: 5s
       timeout: 3s
       retries: 5

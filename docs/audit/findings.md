@@ -13,6 +13,15 @@ Status vocabulary: `open` · `fixed (<sha or PR>)` · `refuted (<date>, reason)`
 
 Runs:
 
+- **2026-10-28 prerelease** — five-scope Astra finder plus three independent
+  Astra refuters per medium finding; four findings confirmed 3/3 and fixed in
+  `d68758d`. See `runs/2026-10-28-prerelease.md` for final validation/gate.
+
+- **2026-10-28** — ecosystem sweep and advisory triage of `dd44f98` plus local
+  maintenance changes; see `runs/2026-10-28-sweep.md`. Redis command
+  drift overlaps GATE-3..5 already fixed by upstream September maintenance;
+  six dependency advisories (ADVISORY-1) addressed locally.
+
 - **Baseline** — pre-release audit of 2026-08-22 (`6b702ae`), 18 verified
   findings → 16 confirmed, 2 refuted. Report predates the `runs/` directory;
   details were summarized in `docs/workflowz.md` before this ledger existed.
@@ -42,7 +51,7 @@ Runs:
 ## GATE-2 — XREADGROUP BLOCK detection blinded by a group/consumer named "STREAMS"; real BLOCK option reaches Redis and wedges the shared connection
 
 - Found: 2026-09-06 · Sev: high · Location: `src/commands.ts:286-296`
-- Status: fixed (2026-09-08 recovery candidate; independent review pending)
+- Status: fixed (dd44f98; independently reverified 2026-10-28)
 - Fix: `checkBlockedCommand` parses XREAD/XREADGROUP positionally like Redis:
   opaque GROUP header values and COUNT values are skipped at every option
   position, including repeated/reordered GROUP headers accepted by Redis.
@@ -64,7 +73,7 @@ Runs:
 ## GATE-3 — Redis 8.10 `BLMOVEM` is a blocking command the gate allowed; wedges the shared connection
 
 - Found: 2026-09-24 · Sev: high · Location: `src/commands.ts` (`BLOCKED_COMMANDS`, `BLOCKING_CMDS`)
-- Status: fixed (2026-09-24 sweep branch `claude/nice-cray-p4bj63`)
+- Status: fixed (8075ab0; independently reverified 2026-10-28)
 - Resolution: Redis 8.10.0 added `BLMOVEM` (`COMMAND INFO` flags: `blocking`).
   Repro before fix against Redis 8.10.2: `POST / ["BLMOVEM","src","dst","LEFT","RIGHT","0"]`
   hangs, and a bystander `POST / ["PING"]` also times out until an external
@@ -76,7 +85,7 @@ Runs:
 ## GATE-4 — Redis 8.x server-admin commands `BACKUP`, `HOTKEYS`, `TRIMSLOTS` allowed
 
 - Found: 2026-09-24 · Sev: medium · Location: `src/commands.ts`
-- Status: fixed (2026-09-24 sweep branch `claude/nice-cray-p4bj63`)
+- Status: fixed (8075ab0; independently reverified 2026-10-28)
 - Resolution: `BACKUP` (8.10, all subcommands flagged `admin` except HELP)
   starts/seals server-side backups; `HOTKEYS` (8.6, same flag pattern) enables
   server-wide tracking; `TRIMSLOTS` (8.4, `@dangerous`) mass-deletes keys by slot
@@ -87,7 +96,7 @@ Runs:
 ## GATE-5 — Redis 8.10 `HIMPORT` fieldsets are per-connection state shared by every proxy user
 
 - Found: 2026-09-24 · Sev: medium · Location: `src/commands.ts`
-- Status: fixed (2026-09-24 sweep branch `claude/nice-cray-p4bj63`)
+- Status: fixed (8075ab0; independently reverified 2026-10-28)
 - Resolution: `HIMPORT PREPARE/SET/DISCARD/DISCARDALL` keep fieldsets on the
   client connection. On the shared connection one token holder's
   `HIMPORT DISCARDALL` wipes other users' sessions and fieldsets accumulate
@@ -290,7 +299,7 @@ Runs:
 
 - Found: 2026-09-06 · Sev: high · Location: `src/routes/pubsub.ts:46`,
   `src/index.ts:34-39`
-- Status: fixed (2026-09-08 recovery candidate; independent review pending)
+- Status: fixed (dd44f98; independently reverified 2026-10-28)
 - Fix: `Bun.serve` now sets `idleTimeout: 255` (Bun's max) — SSE keep-alives
   (15s) reset the timer, quiet subscriptions are no longer reaped, and plain
   HTTP keep-alive sockets still get idle reaping. Regression test keeps an
@@ -392,3 +401,57 @@ Runs:
   Actual bundled Compose smoke tests verify both no-password and authenticated
   boot, HTTP PING, and the expected Redis NOAUTH behavior. External URLs need
   their own credentials; this option does not configure managed backends.
+
+## ADVISORY-1 — Pinned Hono and Zod versions have six known advisories
+
+- Found: 2026-10-28 · Sev: medium (application exposure; upstream Zod severity high)
+- Location: `package.json:26` (dependencies), `src/middleware/auth.ts:20` (query parser),
+  `src/config.ts:3` (scalar env validation)
+- Status: fixed (7b1d1c7; revalidated in the 2026-10-28 prerelease candidate)
+- Repro: `bun audit` on the baseline reports GHSA-gqvv-2mrq-wpjv,
+  GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx, GHSA-hxh3-vqpv-xpqv,
+  GHSA-5r4p-p66f-jhc7 and GHSA-mrhx-c7xc-m3w5.
+- Fix: pin Hono 4.13.14 and Zod 4.6.7, regenerate lockfile. Final audit reports
+  no known vulnerabilities. The sweep report records per-advisory exposure.
+  Remote Dependabot alert #8 remains open until this fix lands on the default branch.
+
+## GATE-7 — Publish shortcut bypasses the operator command blocklist
+
+- Found: 2026-10-28 · Sev: medium · Location at audited HEAD: `src/routes/pubsub.ts:380`
+- Status: fixed (d68758d)
+- Repro: with UPREDIS_BLOCKED_COMMANDS=PUBLISH, generic POST / returns 400 while
+  POST /publish/audit/hello returned 200. Independent refuters: 3/3 real.
+- Fix: invoke the existing command gate before shortcut publishing; config-variant
+  regression checks both endpoints. See the 2026-10-28 prerelease report.
+
+## FIDELITY-6 — Commas in accepted PubSub names corrupt SDK SSE framing
+
+- Found: 2026-10-28 · Sev: medium · Location at audited HEAD: `src/translate/pubsub.ts:13,22`
+- Status: fixed (d68758d)
+- Repro: SDK subscribe("audit,comma") then publish("audit,comma","hello") delivered
+  channel "audit" and message 'comma,"hello"'. Broad patterns also matched names
+  they cannot represent. Independent refuters: 3/3 real.
+- Fix: HTTP 400 for unsupported targets; a broad pattern receiving an unsupported
+  channel emits a safe SDK error event and closes. Real SDK and HTTP regressions
+  verify no corrupted message escapes. Name restrictions are documented.
+
+## CONC-8 — Pattern parser rejection closes logically but leaks its socket
+
+- Found: 2026-10-28 · Sev: medium · Location at audited HEAD: `src/redis-pattern.ts:288,316`
+- Status: fixed (d68758d)
+- Repro: oversized bulk declaration rejects the parser; await sub.closed then
+  sub.close() leaves one upstream socket open. Independent refuters: 3/3 real.
+- Fix: terminate/clear the transport on every closure path, before the idempotent
+  logical-close guard. Original probe reports zero sockets after the fix;
+  real-socket regression passes on Bun 1.4.4 and 1.3.6.
+
+## DEPLOY-10 — README promises an invalid image-only Redis 8-to-7 rollback
+
+- Found: 2026-10-28 · Sev: medium · Location at audited HEAD: `README.md:431–434`
+- Status: fixed (d68758d)
+- Repro: Redis 8.8 SAVE of one ordinary string writes REDIS0014; Redis 7.4.12
+  redis-check-rdb fails "Can't handle RDB format version 14". Independent
+  refuters: 3/3 real, using disposable data.
+- Fix: replace downgrade promise with current-data preservation, verified
+  compatible backup or tested migration into a separate volume, and explicit
+  reconciliation of writes made since the backup.

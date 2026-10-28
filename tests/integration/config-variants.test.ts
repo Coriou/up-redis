@@ -106,3 +106,25 @@ describe("UPREDIS_ALLOW_TOKEN_QUERY_PARAM=false requires the header", () => {
 		expect(res.status).toBe(200)
 	})
 })
+
+describe("PUBLISH blocklist covers every publishing endpoint", () => {
+	let server: SpawnedServer
+	beforeAll(async () => {
+		server = await spawnServer({ UPREDIS_BLOCKED_COMMANDS: "PUBLISH" })
+	}, 30_000)
+	afterAll(() => server?.close())
+
+	test("generic command and publish shortcut both reject the configured command", async () => {
+		for (const path of ["/", "/publish/blocklist-audit/hello"]) {
+			const res = await fetch(`${server.baseUrl}${path}`, {
+				method: "POST",
+				headers: authHeaders,
+				...(path === "/" ? { body: JSON.stringify(["PUBLISH", "blocklist-audit", "hello"]) } : {}),
+			})
+			expect(res.status).toBe(400)
+			expect(await res.json()).toEqual({
+				error: "PUBLISH is not allowed — it is in the UPREDIS_BLOCKED_COMMANDS blocklist",
+			})
+		}
+	})
+})

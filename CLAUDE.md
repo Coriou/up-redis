@@ -7,7 +7,7 @@ Modern rewrite of [SRH](https://github.com/hiett/serverless-redis-http), sibling
 
 ## Tech Stack
 
-- **Runtime:** Bun 1.3.6+ floor (native TypeScript); CI and the Docker image pin 1.4.2
+- **Runtime:** Bun 1.3.6+ floor (native TypeScript); CI and the Docker image pin 1.4.4
 - **HTTP:** Hono v4
 - **Redis client:** `Bun.redis` (native, RESP3, auto-pipelining, zero-dep)
 - **Validation:** Zod v4
@@ -90,8 +90,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 - Subscriber mode: `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` (+ `UNSUBSCRIBE` variants) — use `/subscribe/:channel`
 - Monitor mode: `MONITOR`
 - Transaction state: `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` — use `/multi-exec`
-- Database switching: `SELECT`
-- Per-connection import sessions: `HIMPORT` (Redis 8.10+ fieldsets)
+- Database switching: `SELECT`; session-local hash fieldsets: `HIMPORT`
 - Authentication/protocol/routing state: `AUTH`, `HELLO`, `READONLY`, `READWRITE`, `ASKING`
 - Connection termination: `QUIT`, `RESET`
 
@@ -108,7 +107,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up  # Dev (watch 
 - `CLIENT KILL` — could kill the proxy's own shared connection
 - `CLIENT PAUSE` / `CLIENT UNPAUSE` — server-wide pause
 - `CLIENT REPLY` — corrupts protocol on shared connection
-- `ACL`, `MODULE`, `TRIMSLOTS`, `BACKUP` / `HOTKEYS` (all but `HELP`), persistence/replication controls, and mutating `CONFIG` / `FUNCTION` / `SCRIPT` / `LATENCY` / `MEMORY` / `SLOWLOG` operations
+- `ACL`, `MODULE`, `BACKUP`, `TRIMSLOTS`, persistence/replication controls, and mutating `HOTKEYS` / `CONFIG` / `FUNCTION` / `SCRIPT` / `LATENCY` / `MEMORY` / `SLOWLOG` operations
 - Mutating `CLIENT` operations and all non-read-only `CLUSTER` subcommands
 
 **Dangerous by default (configurable):**
@@ -185,7 +184,9 @@ Exact-subscribe buffers any messages that arrive during subscription setup until
 
 **Pattern subscribe (`GET|POST /psubscribe/:pattern`):** Bun.redis doesn't support `PSUBSCRIBE`, so pattern subscriptions are backed by a hand-rolled RESP client in `src/redis-pattern.ts` (`RawPatternConnection` / `createPatternSubscription`). The SSE streaming, tracking, and graceful-shutdown behavior otherwise mirror exact subscribe.
 
-**Publish shortcut (`POST /publish/:channel/:message`):** publishes `:message` to `:channel` and returns the receiver count, without requiring a command-array body.
+**Publish shortcut (`POST /publish/:channel/:message`):** publishes `:message` to `:channel` and returns the receiver count, without requiring a command-array body. The shortcut invokes the same operator command gate as generic PUBLISH.
+
+**SSE target limitations:** channel/pattern names cannot contain commas or ASCII control characters. Broad patterns encountering an unsupported external channel emit a safe error event and close; the SDK error listener receives its string message.
 
 ## Project Structure
 
@@ -266,13 +267,13 @@ Inherited from up-vector experience — critical for correctness:
 
 ## Testing Strategy
 
-622 tests across three tiers (Redis 8):
+654 tests across three tiers (Redis 8); run the SDK tier in both encodings:
 
 | Tier                  | Tests | Purpose                                                                                                                                                                           |
 | --------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Unit**              | 327   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening and preserved ZMPOP nesting, base64 encoding (incl. depth-aware "OK"), SSE ordering + newline-safe payloads + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation (booleans coerced), stream-option gate parsing (including repeated GROUP headers), fail-closed admin command policy, token strength + placeholder refusal, config coercion traps |
-| **Integration**       | 191   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers incl. stalled-upstream (bounded awaits, shutdown) and idle-SSE (Bun idleTimeout) regression harnesses. Redis 6 skips five hash-field-expiry commands and ZMPOP; Redis 7 skips the three Redis-8-only commands. A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
-| **SDK Compatibility** | 104   | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class, newline payload round-trip, withscores/withvalues shape, literal-"OK" fidelity) |
+| **Unit**              | 332   | RESP3 normalization (incl. ±inf/nan + depth cap), withscores/withvalues flattening and preserved ZMPOP nesting, base64 encoding (incl. depth-aware "OK"), SSE ordering + newline-safe payloads + backpressure bound, RESP parser (partial reads / malformed / bulk cap), `parseRedisUrl`, subscription slot limiter, arg validation (booleans coerced), stream-option gate parsing (including repeated GROUP headers), fail-closed admin command policy, token strength + placeholder refusal, config coercion traps |
+| **Integration**       | 213   | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub subscribe/publish, stress, edge cases, health, auth, blocked commands) + spawned config-variant servers incl. stalled-upstream (bounded awaits, shutdown) and idle-SSE (Bun idleTimeout) regression harnesses. Redis 6 skips five hash-field-expiry commands and ZMPOP; Redis 7 skips the three Redis-8-only commands. A `/health` preflight in setup.ts fails fast on a stale/disconnected server |
+| **SDK Compatibility** | 109   | Real `@upstash/redis` SDK against up-redis (strings, hashes, lists, sets, sorted sets, SCAN, geo, HyperLogLog, Lua scripting, pipelines, transactions, PubSub `Subscriber` class, newline payload round-trip, withscores/withvalues shape, literal-"OK" fidelity) |
 
 Weekly CI (`compat.yml`) runs against `@upstash/redis@latest` every Monday 9 AM UTC and auto-creates GitHub issues on drift.
 
