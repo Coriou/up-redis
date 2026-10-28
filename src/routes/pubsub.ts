@@ -2,6 +2,7 @@ import type { RedisClient } from "bun"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import { type SSEStreamingApi, streamSSE } from "hono/streaming"
+import { checkBlockedCommand } from "../commands"
 import { config } from "../config"
 import { log } from "../logger"
 import { createDedicatedConnection, getClient } from "../redis"
@@ -299,6 +300,22 @@ async function handlePatternSubscribe(c: Context) {
 		try {
 			sub = await createPatternSubscription(pattern, (matchedPattern, channel, message) => {
 				if (disconnected) return
+				// A broad pattern can match names that cannot be represented in the
+				// SDK's comma-delimited wire format, even from an external publisher.
+				if (!isValidSubscriptionTarget(channel)) {
+					disconnected = true
+					log.warn("pubsub channel cannot be represented in SSE", {
+						requestId: c.get("requestId"),
+					})
+					// The SDK dispatches the error event with a string message. Never
+					// interpolate the untrusted channel into the delimiter fields.
+					stream
+						.writeSSE({
+							data: 'error,,"Channel cannot be represented in the PubSub SSE format"',
+						})
+						.then(onStuck, onStuck)
+					return
+				}
 				const data = formatPatternMessageEvent(matchedPattern, channel, message)
 				if (!ready) {
 					pendingMessages.push(data)
@@ -377,6 +394,8 @@ async function handlePublish(c: Context) {
 	}
 
 	try {
+		const blocked = checkBlockedCommand("PUBLISH", [channel, message])
+		if (blocked) return c.json({ error: blocked }, 400)
 		const result = await getClient().publish(channel, message)
 		return c.json({ result })
 	} catch (err) {
@@ -422,6 +441,9 @@ export function activeSubscriptionCount(): number {
 
 function isValidSubscriptionTarget(target: string): boolean {
 	return Boolean(
-		target && target.length <= MAX_CHANNEL_NAME_LENGTH && !hasControlCharacters(target),
+		target &&
+			target.length <= MAX_CHANNEL_NAME_LENGTH &&
+			!target.includes(",") &&
+			!hasControlCharacters(target),
 	)
 }

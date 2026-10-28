@@ -25,6 +25,7 @@ The default run uses the SDK default encoding (JSON in 1.40). The second run exp
 These are documented differences between Upstash and standard Redis:
 
 - **BOM-prefixed plain strings with base64** — the SDK TextDecoder removes the leading BOM; the proxy preserves its bytes. The SDK default JSON encoding preserves it.
+- **PubSub names** — SSE targets cannot contain commas or ASCII control characters. A broad pattern matching an unsupported external channel emits an SDK error and closes, rather than delivering a corrupted message.
 - **RedisJSON commands** — Upstash has custom JSON response formats that differ from Redis Stack
 - **Multi-region read-your-writes waiting** — up-redis echoes a stable sync token for SDK compatibility, but does not need cross-region waiting because it talks to one Redis backend
 - **UNLINK with 0 keys** — Upstash silently succeeds, Redis returns an error

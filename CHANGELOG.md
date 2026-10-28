@@ -49,6 +49,13 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ### Fixed
 
+- Apply the operator PUBLISH blocklist to the dedicated publish shortcut.
+- Reject comma-containing PubSub targets and report an explicit stream error when
+  a broad pattern receives an unsupported external channel.
+- Close pattern subscription sockets on RESP parser failures and repeated cleanup.
+- Replace the unsafe Redis 8-to-7 image-only rollback promise with backup and
+  migration guidance that accounts for writes after upgrading.
+
 - Accept the SDK's raw boolean command arguments through commands, pipelines, and transactions.
 - Preserve multiline PubSub text and JSON payloads without splitting SSE messages, and keep
   quiet subscriptions alive beyond Bun's default idle timeout.

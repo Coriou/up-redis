@@ -187,7 +187,7 @@ class RawPatternConnection {
 		socketPromise.catch(() => {})
 		socketPromise
 			.then((socket) => {
-				if (timedOut) socket.close()
+				if (timedOut || this.closed) socket.terminate()
 			})
 			.catch(() => {})
 
@@ -236,13 +236,7 @@ class RawPatternConnection {
 	}
 
 	close(): void {
-		if (this.closed) return
-		try {
-			this.socket?.write(encodeRespCommand(["PUNSUBSCRIBE"]))
-		} catch {}
-		try {
-			this.socket?.close()
-		} catch {}
+		// Dedicated subscriptions need no PUNSUBSCRIBE round trip.
 		this.handleClose()
 	}
 
@@ -314,6 +308,13 @@ class RawPatternConnection {
 	}
 
 	private handleClose(error?: Error): void {
+		// Logical closure must also tear down the transport on parser/error paths.
+		// Clear it first because terminate() may trigger a close callback.
+		const socket = this.socket
+		this.socket = null
+		try {
+			socket?.terminate()
+		} catch {}
 		if (this.closed) return
 		this.closed = true
 		const pending = this.pending.splice(0)

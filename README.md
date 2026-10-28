@@ -121,6 +121,16 @@ curl -X POST http://localhost:8080/ \
 # → {"result":1}
 ```
 
+PubSub SSE channel and pattern names must be 1–512 characters and cannot contain
+commas or ASCII control characters. The SDK uses comma-delimited fields without
+a name-escaping mechanism. Requests with incompatible targets return HTTP 400.
+If a broad pattern matches an incompatible channel published through a generic
+command or an external Redis client, the stream emits
+`error,,"Channel cannot be represented in the PubSub SSE format"` and closes.
+The SDK reports this through its `error` listener; reconnect with a narrower
+pattern after fixing the publisher. The publish shortcut also respects
+`UPREDIS_BLOCKED_COMMANDS=PUBLISH`.
+
 ## API Compatibility
 
 Implements the [Upstash Redis REST API](https://upstash.com/docs/redis/features/restapi), validated by 570 tests including 101 using the real `@upstash/redis` SDK.
@@ -145,11 +155,11 @@ Authentication accepts `Authorization: Bearer <token>` and Upstash's `_token=<to
 All Redis commands are forwarded transparently. up-redis is a proxy — it doesn't interpret commands, so any command your Redis server supports will work, with these exceptions blocked at the proxy layer to protect the shared connection:
 
 - **Connection-state-changing:** `SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE` (use `/subscribe/:channel`), `MONITOR`, `MULTI`/`EXEC`/`DISCARD`/`WATCH`/`UNWATCH` (use `/multi-exec`), `AUTH`, `HELLO`, `READONLY`/`READWRITE`, `ASKING`, `SELECT`, `QUIT`, `RESET`
-- **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
-- **Server admin / DoS vectors:** `SHUTDOWN`, replication/persistence controls (`REPLICAOF`, `FAILOVER`, `MIGRATE`, `SAVE`, `BGSAVE`, etc.), `DEBUG`, `ACL`, `MODULE`, mutating `CONFIG`/`FUNCTION`/`SCRIPT`/`LATENCY`/`MEMORY`/`SLOWLOG` subcommands, mutating `CLIENT` subcommands, and all non-read-only `CLUSTER` subcommands
+- **Blocking commands:** `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMOVEM`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, `XREAD BLOCK`, `XREADGROUP BLOCK` — these would hold the shared connection and starve every other request
+- **Server admin / DoS vectors:** `SHUTDOWN`, replication/persistence controls (`REPLICAOF`, `FAILOVER`, `MIGRATE`, `SAVE`, `BGSAVE`, etc.), `DEBUG`, `ACL`, `MODULE`, `BACKUP`, `HOTKEYS` (except HELP), `TRIMSLOTS`, mutating `CONFIG`/`FUNCTION`/`SCRIPT`/`LATENCY`/`MEMORY`/`SLOWLOG` subcommands, mutating `CLIENT` subcommands, and all non-read-only `CLUSTER` subcommands
 - **Dangerous by default (configurable):** `KEYS` (O(N) — scans the whole keyspace on the shared connection), `FLUSHALL`, `FLUSHDB`, `SWAPDB` are blocked by default. Set `UPREDIS_ALLOW_DANGEROUS_COMMANDS=true` to permit them. Add your own with `UPREDIS_BLOCKED_COMMANDS`.
 
-Requests are also rejected with `400` if a command argument isn't a string or number (e.g. an object or `null`, which would otherwise be silently coerced to garbage like `"[object Object]"`), or if the `Upstash-Response-Format: resp2` header is sent (up-redis only speaks the JSON envelope).
+Requests are also rejected with `400` if a command argument isn't a string, number, or boolean (e.g. an object or `null`, which would otherwise be silently coerced to garbage like `"[object Object]"`), or if the `Upstash-Response-Format: resp2` header is sent (up-redis only speaks the JSON envelope).
 
 Read-only `CLIENT`, `CLUSTER`, `CONFIG`, `FUNCTION`, `LATENCY`, `MEMORY`, and `SLOWLOG` subcommands remain available through explicit allowlists. Unknown subcommands in these mixed admin families fail closed after a Redis upgrade. `SCRIPT EXISTS` and `SCRIPT LOAD` remain available for `EVALSHA` compatibility.
 
@@ -424,14 +434,19 @@ CI runs the integration + SDK-compatibility suites against Redis 6, Redis 7, Red
 The default bundled backend moved from `redis:7-alpine` to `redis:8-alpine`. **This changes the
 live data path on an existing production deploy**, so upgrade deliberately:
 
-1. **In-place upgrade is safe.** Redis 8 loads Redis 7.x RDB/AOF (forward-compatible), so the
-   existing `redis-data` named volume upgrades in place — no dump/restore needed.
-2. **Snapshot first anyway.** Take a backup before pulling the new image (e.g. `BGSAVE`, copy the
-   RDB file, or snapshot the volume) — standard upgrade hygiene.
-3. **It is fully reversible.** To roll back to Redis 7, set `UPREDIS_REDIS_IMAGE=redis:7-alpine`
-   in Coolify's env UI (or `.env`) and redeploy. Reversibility holds because Redis 7 → 8 is
-   forward-compatible at the persistence layer for ordinary keyspaces; an operator who has begun
-   using Redis-8-only features should not expect a clean downgrade.
+1. **Verify the upgrade in isolation.** Restore a backup into the exact target Redis image
+   and check application invariants before moving the production volume. Redis 8 can load
+   older persistence formats, but modules and application behavior also need validation.
+2. **Keep a verified pre-upgrade backup.** Take a coherent RDB/AOF backup, record the source
+   version and checksum, and verify restoration using that source version. Preserve this copy
+   outside the live volume; follow [persistence and recovery](docs/persistence.md).
+3. **A backend downgrade requires a data plan.** Changing the image back to Redis 7 can fail
+   even for ordinary string keys: newer Redis 8 snapshots use an RDB format Redis 7 cannot
+   read. Preserve the current Redis 8 volume and a fresh backup. To return to Redis 7, use a
+   separate volume with a verified Redis-7-compatible backup or a tested logical migration.
+   Restoring the pre-upgrade backup loses later writes unless they are reconciled. Pause
+   writers for the cutover and verify the resulting data before switching traffic. Do not
+   point Redis 7 at the upgraded volume or overwrite the current data as a rollback step.
 
 The **floor is unchanged**: Redis 6+ is still supported.
 

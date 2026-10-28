@@ -593,3 +593,19 @@ describe("graceful shutdown with a stalled subscription upstream (CONC-7)", () =
 		expect(elapsed).toBeLessThan(15_000)
 	}, 30_000)
 })
+
+describe("PubSub delimiter validation", () => {
+	for (const endpoint of ["subscribe", "psubscribe", "publish"]) {
+		for (const method of endpoint === "publish" ? ["POST"] : ["GET", "POST"]) {
+			test(`${method} ${endpoint} rejects comma-containing targets before streaming`, async () => {
+				const suffix = endpoint === "publish" ? "/hello" : ""
+				const res = await fetch(`${BASE_URL}/${endpoint}/audit%2Ccomma${suffix}`, {
+					method,
+					headers: AUTH,
+				})
+				expect(res.status).toBe(400)
+				expect(res.headers.get("content-type")).toContain("application/json")
+			})
+		}
+	}
+})
