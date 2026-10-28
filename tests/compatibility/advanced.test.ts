@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { createRedis, randomKey } from "./setup"
+import { createRedis, randomKey, TOKEN, URL } from "./setup"
 
 const redis = createRedis()
 const keys: string[] = []
@@ -15,10 +15,10 @@ afterAll(async () => {
 	}
 })
 
-describe("SDK: literal-value fidelity in base64 mode", () => {
+describe("SDK: literal-value fidelity", () => {
 	test('the literal value "OK" round-trips through a list', async () => {
 		// Regression: "OK" inside an array used to be left unencoded, so the SDK
-		// (default base64 mode) decoded it to garbage. It must survive a round-trip.
+		// (when configured for base64) decoded it to garbage. It must survive a round-trip.
 		const key = k()
 		await redis.rpush(key, "OK", "hello", "OK")
 		const list = await redis.lrange(key, 0, -1)
@@ -29,6 +29,30 @@ describe("SDK: literal-value fidelity in base64 mode", () => {
 		const key = k()
 		await redis.set(key, "OK")
 		expect(await redis.get<string>(key)).toBe("OK")
+	})
+})
+
+describe("SDK: BOM-aware deserialization", () => {
+	test("BOM-prefixed plain string follows SDK encoding semantics", async () => {
+		const key = k()
+		await redis.set(key, "\uFEFFhello")
+		const res = await fetch(URL, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${TOKEN}`, "Upstash-Encoding": "base64" },
+			body: JSON.stringify(["GET", key]),
+		})
+		const wire = (await res.json()) as { result: string }
+		expect(Buffer.from(wire.result, "base64").toString("utf8")).toBe("\uFEFFhello")
+		// SDK base64decode uses TextDecoder's default BOM stripping. The proxy
+		// preserves the bytes; the SDK default JSON path preserves the string too.
+		expect(await redis.get(key)).toBe(
+			process.env.UPREDIS_TEST_ENCODING === "base64" ? "hello" : "\uFEFFhello",
+		)
+	})
+	test("decodes BOM-prefixed JSON", async () => {
+		const key = k()
+		await redis.set(key, '\uFEFF{"hello":"world"}')
+		expect(await redis.get(key)).toEqual({ hello: "world" })
 	})
 })
 

@@ -58,6 +58,8 @@ const BLOCKED_COMMANDS = new Set([
 	"UNWATCH",
 	// Database switching
 	"SELECT",
+	// Session-local hash fieldsets would leak between requests.
+	"HIMPORT",
 	// Authentication, protocol, and cluster-routing state
 	"AUTH",
 	"HELLO",
@@ -72,6 +74,7 @@ const BLOCKED_COMMANDS = new Set([
 	"BRPOP",
 	"BRPOPLPUSH",
 	"BLMOVE",
+	"BLMOVEM",
 	"BLMPOP",
 	"BZPOPMIN",
 	"BZPOPMAX",
@@ -91,6 +94,8 @@ const BLOCKED_COMMANDS = new Set([
 	"SAVE",
 	"BGSAVE",
 	"BGREWRITEAOF",
+	"BACKUP",
+	"TRIMSLOTS",
 	"REPLCONF",
 	"SYNC",
 	"PSYNC",
@@ -135,6 +140,7 @@ const ALLOWED_CLUSTER_SUBCOMMANDS = new Set([
 /** Server command families where only explicitly read-only operations are safe. */
 const READ_ONLY_SUBCOMMANDS = new Map<string, ReadonlySet<string>>([
 	["CONFIG", new Set(["GET", "HELP"])],
+	["HOTKEYS", new Set(["GET", "HELP"])],
 	["FUNCTION", new Set(["LIST", "STATS", "DUMP", "HELP"])],
 	["LATENCY", new Set(["DOCTOR", "GRAPH", "HISTORY", "HISTOGRAM", "LATEST", "HELP"])],
 	["MEMORY", new Set(["DOCTOR", "MALLOC-STATS", "STATS", "USAGE", "HELP"])],
@@ -165,6 +171,7 @@ const BLOCKING_CMDS = new Set([
 	"BRPOP",
 	"BRPOPLPUSH",
 	"BLMOVE",
+	"BLMOVEM",
 	"BLMPOP",
 	"BZPOPMIN",
 	"BZPOPMAX",
@@ -185,6 +192,8 @@ const ADMIN_CMDS = new Set([
 	"SAVE",
 	"BGSAVE",
 	"BGREWRITEAOF",
+	"BACKUP",
+	"TRIMSLOTS",
 	"REPLCONF",
 	"SYNC",
 	"PSYNC",

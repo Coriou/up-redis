@@ -11,6 +11,10 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ### Security
 
+- Refresh Hono to 4.13.14 and Zod to 4.6.7, clearing six dependency advisories.
+- Block new Redis BLMOVEM, BACKUP, HIMPORT, and TRIMSLOTS commands; restrict HOTKEYS to
+  read-only introspection to preserve shared-connection and server safety.
+
 - Reject blocking stream reads even when repeated/reordered GROUP headers contain
   reserved-word names, preserving shared-connection availability.
 - Refuse published placeholder API tokens at startup unless explicitly allowed.
@@ -28,10 +32,18 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ### Changed
 
-- Raised the supported runtime floor to Bun 1.3.6 and pinned CI/container builds to Bun 1.3.14.
-- Updated Hono to 4.13.3, `@upstash/redis` to 1.38.2, Biome to 2.5.10, Bun types to 1.4.0, and TypeScript to 7.0.2.
+- Refresh the digest-pinned bundled Redis 8 image to the 2026-10-28 manifest
+  (Redis 8.10.3 on amd64/arm64); existing persistence/auth settings stay unchanged.
+- Run SDK compatibility with default JSON and explicit base64 encodings in test,
+  weekly drift, and release CI; cover SDK 1.40 BOM-aware decoding.
+- Refresh Docker, release and CodeQL action SHA pins within their current major
+  versions, and pin Trivy 0.76.1.
+- Preserve the previous Markdown formatting scope when adopting Biome 2.6.
+
+- Raised the supported runtime floor to Bun 1.3.6 and pinned CI/container builds to Bun 1.4.4.
+- Updated Hono to 4.13.14, Zod to 4.6.7, `@upstash/redis` to 1.40.0, Biome to 2.6.3, Bun types to 1.4.4, and TypeScript to 7.0.2.
 - Marked the service package private and declared its Bun engine/package-manager metadata.
-- Aligned `biome.json` `$schema` with the Biome 2.5.10 CLI.
+- Aligned `biome.json` `$schema` with the Biome 2.6.3 CLI.
 
 ### Fixed
 

@@ -1,7 +1,7 @@
 /**
  * Recursively base64-encode string values in a response.
  *
- * Called when the SDK sends `Upstash-Encoding: base64` header (the default).
+ * Called when the SDK sends `Upstash-Encoding: base64` header (opt-in since SDK 1.40; default in older SDKs).
  *
  * The literal "OK" is special. The SDK's `decode()` only honors the unencoded "OK"
  * passthrough for a top-level scalar result and for strings it reaches via a recursive

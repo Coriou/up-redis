@@ -322,3 +322,21 @@ describe("Edge cases: pipeline / multi-exec size limits", () => {
 		expect((data as { error: string }).error).toContain("1000")
 	})
 })
+
+describe("new Redis server command safety over HTTP", () => {
+	for (const command of [
+		["BLMOVEM", "missing", "dest", "LEFT", "RIGHT", "0"],
+		["BACKUP", "START"],
+		["HIMPORT", "PREPARE", "fields", "name"],
+		["TRIMSLOTS", "RANGES", "1", "0", "16383"],
+		["HOTKEYS", "START"],
+	]) {
+		for (const path of ["/", "/pipeline", "/multi-exec"]) {
+			test(`${command[0]} is rejected on ${path}`, async () => {
+				const { status, data } = await api("POST", path, path === "/" ? command : [command])
+				expect(status).toBe(path === "/pipeline" ? 200 : 400)
+				expect(JSON.stringify(data)).toContain("not allowed")
+			})
+		}
+	}
+})

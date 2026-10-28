@@ -13,6 +13,10 @@ Status vocabulary: `open` · `fixed (<sha or PR>)` · `refuted (<date>, reason)`
 
 Runs:
 
+- **2026-10-28** — ecosystem sweep and advisory triage of `dd44f98` plus local
+  maintenance changes; see `runs/2026-10-28-sweep.md`. New Redis command
+  drift (GATE-3) and six dependency advisories (ADVISORY-1) addressed locally.
+
 - **Baseline** — pre-release audit of 2026-08-22 (`6b702ae`), 18 verified
   findings → 16 confirmed, 2 refuted. Report predates the `runs/` directory;
   details were summarized in `docs/workflowz.md` before this ledger existed.
@@ -332,3 +336,30 @@ Runs:
   Actual bundled Compose smoke tests verify both no-password and authenticated
   boot, HTTP PING, and the expected Redis NOAUTH behavior. External URLs need
   their own credentials; this option does not configure managed backends.
+
+## GATE-3 — New Redis commands bypass shared-session and server safety policy
+
+- Found: 2026-10-28 · Sev: high · Location: `src/commands.ts:62`, `:77`, `:97`, `:143`
+- Status: fixed (2026-10-28 local maintenance candidate; not merged)
+- Evidence: before this patch `checkBlockedCommand` returned null for
+  `BLMOVEM src dst LEFT RIGHT 0`, `HIMPORT PREPARE fields name`, `BACKUP START`,
+  `HOTKEYS START`, and `TRIMSLOTS RANGES 1 0 16383`. Redis 8.10 command metadata
+  identifies BLMOVEM as blocking and HIMPORT fieldsets as session-local. A token
+  holder could stall all shared commands or interleave fieldset definitions.
+- Fix: block BLMOVEM, HIMPORT, BACKUP, TRIMSLOTS; allow HOTKEYS GET/HELP only.
+  Unit and HTTP regressions cover single, pipeline and transaction endpoints.
+  See `runs/2026-10-28-sweep.md` for upstream sources and executed checks.
+  Recipe 1 independent-refuter verification remains a pre-release task.
+
+## ADVISORY-1 — Pinned Hono and Zod versions have six known advisories
+
+- Found: 2026-10-28 · Sev: medium (application exposure; upstream Zod severity high)
+- Location: `package.json:26` (dependencies), `src/middleware/auth.ts:20` (query parser),
+  `src/config.ts:3` (scalar env validation)
+- Status: fixed (2026-10-28 local maintenance candidate; not merged)
+- Repro: `bun audit` on the baseline reports GHSA-gqvv-2mrq-wpjv,
+  GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx, GHSA-hxh3-vqpv-xpqv,
+  GHSA-5r4p-p66f-jhc7 and GHSA-mrhx-c7xc-m3w5.
+- Fix: pin Hono 4.13.14 and Zod 4.6.7, regenerate lockfile. Final audit reports
+  no known vulnerabilities. The sweep report records per-advisory exposure.
+  Remote Dependabot alert #8 remains open until this fix lands on the default branch.

@@ -186,7 +186,7 @@ Read-only `CLIENT`, `CLUSTER`, `CONFIG`, `FUNCTION`, `LATENCY`, `MEMORY`, and `S
 
 ### Versioning & SDK compatibility
 
-up-redis tracks the current `@upstash/redis` SDK (pinned to `1.38.x` in this repo) and the documented Upstash REST contract. A weekly CI job runs the full SDK compatibility suite against `@upstash/redis@latest` and opens an issue automatically on any drift, so incompatibilities surface quickly. Any standard Redis 6+ server works as the backend; module commands (RedisJSON `JSON.*`, Search `FT.*`) are passed through transparently but only work if your Redis has the corresponding module loaded.
+up-redis tracks the current `@upstash/redis` SDK (pinned to `1.40.0` in this repo) and the documented Upstash REST contract. A weekly CI job runs the full SDK compatibility suite against `@upstash/redis@latest` and opens an issue automatically on any drift, so incompatibilities surface quickly. The suite runs with both the SDK default JSON encoding and explicit base64 responses. New SDK helpers still require backend support: AR* arrays need recent Redis, and VECTOR.* / search helpers are not guaranteed on every backend. Any standard Redis 6+ server works as the backend; module commands (RedisJSON `JSON.*`, Search `FT.*`) are passed through transparently but only work if your Redis has the corresponding module loaded.
 
 up-redis itself follows [Semantic Versioning](https://semver.org/). Changes are recorded in [CHANGELOG.md](./CHANGELOG.md), and pushing a `v*` git tag builds and publishes the container image to `ghcr.io/coriou/up-redis` (semver + `latest` tags) via the release workflow. Pin a specific tag in production rather than tracking `latest`.
 
@@ -337,13 +337,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-570 tests across three tiers:
+639 tests across three tiers (Redis 8), with the SDK suite run in both encodings:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 290 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, fail-closed admin command policy, arg validation, token strength |
-| **Integration** | 179 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); Redis 6 skips five hash-field-expiry commands, Redis 7 skips the three Redis-8-only commands |
-| **SDK Compatibility** | 101 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, withscores/withvalues shape, literal-"OK" fidelity, and SDK 1.38 auto-pipeline behavior) |
+| **Unit** | 329 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, fail-closed admin command policy, arg validation, token strength |
+| **Integration** | 204 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); Redis 6 skips five hash-field-expiry commands and ZMPOP, Redis 7 skips the three Redis-8-only commands |
+| **SDK Compatibility** | 106 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, withscores/withvalues shape, literal-"OK" fidelity, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
 bun test                       # All tests
@@ -460,7 +460,7 @@ and set `UPREDIS_REDIS_URL` to your endpoint (the override requires it and fails
 
 **TLS:** bare `rediss://` / `valkeys://` verifies out of the box against Bun's bundled CAs for
 Upstash, ElastiCache, MemoryDB, Azure Cache, Redis Cloud, and current Aiven. up-redis requires
-Bun ≥ 1.3.6 and ships 1.3.14. **Known limitation:** **private-CA backends** (e.g. GCP
+Bun ≥ 1.3.6 and ships 1.4.4. **Known limitation:** **private-CA backends** (e.g. GCP
 Memorystore, a self-hosted private CA) are not yet supported — a `UPREDIS_REDIS_CA_FILE` option is
 a planned follow-up.
 
