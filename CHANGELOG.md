@@ -9,11 +9,13 @@ Tagging a `v*` release publishes the container image to `ghcr.io/coriou/up-redis
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-28
+
 ### Security
 
 - Refresh Hono to 4.13.14 and Zod to 4.6.7, clearing six dependency advisories.
 - Block new Redis BLMOVEM, BACKUP, HIMPORT, and TRIMSLOTS commands; restrict HOTKEYS to
-  read-only introspection to preserve shared-connection and server safety.
+  HELP-only introspection to preserve shared-connection and server safety.
 
 - Reject blocking stream reads even when repeated/reordered GROUP headers contain
   reserved-word names, preserving shared-connection availability.

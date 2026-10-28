@@ -107,6 +107,13 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("BLMOVE")).not.toBe(null)
 	})
 
+	test("BLMOVEM is blocked (Redis 8.10 blocking multi-move)", () => {
+		expect(checkBlockedCommand("BLMOVEM", ["src", "dst", "LEFT", "RIGHT", "0"])).toContain(
+			"blocking commands",
+		)
+		expect(checkBlockedCommand("LMOVEM", ["src", "dst", "LEFT", "RIGHT", "1"])).toBe(null)
+	})
+
 	test("BLMPOP is blocked", () => {
 		expect(checkBlockedCommand("BLMPOP")).not.toBe(null)
 	})
@@ -425,6 +432,24 @@ describe("checkBlockedCommand", () => {
 		expect(checkBlockedCommand("SLOWLOG", "RESET")).not.toBe(null)
 	})
 
+	test("Redis 8.x admin families are blocked except HELP", () => {
+		for (const sub of ["START", "SEAL", "ABORT", "CLEANUP", "LIST", "STATUS"]) {
+			expect(checkBlockedCommand("BACKUP", sub)).not.toBe(null)
+		}
+		for (const sub of ["START", "STOP", "RESET", "GET"]) {
+			expect(checkBlockedCommand("HOTKEYS", sub)).not.toBe(null)
+		}
+		expect(checkBlockedCommand("BACKUP", "HELP")).toBe(null)
+		expect(checkBlockedCommand("HOTKEYS", "HELP")).toBe(null)
+		expect(checkBlockedCommand("TRIMSLOTS", ["RANGES", "1", "0", "100"])).toContain("admin")
+	})
+
+	test("HIMPORT is blocked (per-connection fieldsets would leak across users)", () => {
+		for (const sub of ["PREPARE", "SET", "DISCARD", "DISCARDALL"]) {
+			expect(checkBlockedCommand("HIMPORT", sub)).toContain("shared Redis connection")
+		}
+	})
+
 	test("SCRIPT keeps EVALSHA helpers and blocks global/debug operations", () => {
 		expect(checkBlockedCommand("SCRIPT", "EXISTS")).toBe(null)
 		expect(checkBlockedCommand("SCRIPT", "LOAD")).toBe(null)
@@ -574,8 +599,8 @@ describe("new Redis command safety", () => {
 		})
 	}
 	test("HOTKEYS allows introspection and rejects tracking mutations and unknown operations", () => {
-		for (const sub of ["GET", "HELP"]) expect(checkBlockedCommand("HOTKEYS", sub)).toBeNull()
-		for (const sub of ["START", "STOP", "RESET", "FUTURE"])
+		for (const sub of ["HELP"]) expect(checkBlockedCommand("HOTKEYS", sub)).toBeNull()
+		for (const sub of ["GET", "START", "STOP", "RESET", "FUTURE"])
 			expect(checkBlockedCommand("HOTKEYS", sub)).toContain("admin")
 	})
 })
