@@ -347,13 +347,13 @@ bun run typecheck        # TypeScript check
 
 ### Testing
 
-639 tests across three tiers (Redis 8), with the SDK suite run in both encodings:
+654 tests across three tiers (Redis 8), with the SDK suite run in both encodings:
 
 | Tier | Tests | Purpose |
 |------|-------|---------|
-| **Unit** | 329 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, fail-closed admin command policy, arg validation, token strength |
-| **Integration** | 204 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); Redis 6 skips five hash-field-expiry commands and ZMPOP, Redis 7 skips the three Redis-8-only commands |
-| **SDK Compatibility** | 106 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, withscores/withvalues shape, literal-"OK" fidelity, and SDK 1.38 auto-pipeline behavior) |
+| **Unit** | 332 | RESP3 normalization (incl. ±inf/nan + depth cap), withscores flattening, base64 encoding (incl. depth-aware "OK"), SSE event ordering + backpressure bound, RESP parser (partial reads / malformed / bulk cap), subscription slot limiter, fail-closed admin command policy, arg validation, token strength |
+| **Integration** | 213 | Full HTTP roundtrips against real Redis (commands, pipelines, transactions, PubSub, auth, health, blocked commands) plus config-variant servers (metrics, subscription cap → 503, dangerous-command + token-query toggles); Redis 6 skips five hash-field-expiry commands and ZMPOP, Redis 7 skips the three Redis-8-only commands |
+| **SDK Compatibility** | 109 | Real `@upstash/redis` SDK against up-redis (including `Subscriber` class, sync-token handling, withscores/withvalues shape, literal-"OK" fidelity, and SDK 1.38 auto-pipeline behavior) |
 
 ```bash
 bun test                       # All tests
