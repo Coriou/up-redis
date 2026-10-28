@@ -595,7 +595,7 @@ describe("new Redis command safety", () => {
 	})
 	for (const command of ["BACKUP", "TRIMSLOTS"]) {
 		test(`${command} server-wide operations are blocked`, () => {
-			expect(checkBlockedCommand(command)).toContain("admin")
+			expect(checkBlockedCommand(command, "START")).toContain("admin")
 		})
 	}
 	test("HOTKEYS allows introspection and rejects tracking mutations and unknown operations", () => {
