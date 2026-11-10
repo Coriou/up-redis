@@ -23,7 +23,7 @@
 		"check:compose": "bun scripts/check-compose.ts"
 	},
 	"dependencies": {
-		"hono": "4.13.14",
+		"hono": "4.13.17",
 		"zod": "4.6.7"
 	},
 	"devDependencies": {
